@@ -1,0 +1,140 @@
+"use client";
+
+import { useCallback, useEffect, useRef, useState } from "react";
+
+export class ApiError extends Error {
+  constructor(
+    public status: number,
+    public code: string,
+    message: string,
+    public details?: any,
+  ) {
+    super(message);
+  }
+}
+
+let currentBranch: string | null = null;
+/** Set by the product shell; sent with every request so data is branch-scoped. */
+export function setActiveBranch(id: string | null) {
+  currentBranch = id;
+}
+
+interface CallOptions {
+  method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+  body?: unknown;
+  form?: FormData;
+  /** Do not redirect to /login on 401 (used by the login page itself). */
+  noRedirect?: boolean;
+}
+
+export async function api<T = any>(path: string, opts: CallOptions = {}): Promise<T> {
+  const method = opts.method ?? (opts.body !== undefined || opts.form ? "POST" : "GET");
+  const headers: Record<string, string> = {};
+  if (method !== "GET") headers["x-saf-request"] = "1";
+  if (currentBranch) headers["x-saf-branch"] = currentBranch;
+  let body: BodyInit | undefined;
+  if (opts.form) body = opts.form;
+  else if (opts.body !== undefined) {
+    headers["content-type"] = "application/json";
+    body = JSON.stringify(opts.body);
+  }
+  let res: Response;
+  try {
+    res = await fetch(`/api${path}`, { method, headers, body, credentials: "same-origin", cache: "no-store" });
+  } catch {
+    throw new ApiError(0, "NETWORK", "Cannot reach the server. Check your connection and try again.");
+  }
+  if (res.status === 204) return undefined as T;
+  const isJson = (res.headers.get("content-type") || "").includes("application/json");
+  const data = isJson ? await res.json().catch(() => null) : null;
+  if (!res.ok) {
+    const err = new ApiError(res.status, data?.error?.code ?? "ERROR", data?.error?.message ?? `Request failed (${res.status})`, data?.error?.details);
+    if (typeof window !== "undefined" && !opts.noRedirect) {
+      if (res.status === 401 && !window.location.pathname.startsWith("/login")) {
+        window.location.href = `/login?next=${encodeURIComponent(window.location.pathname)}`;
+      } else if (err.code === "PASSWORD_CHANGE_REQUIRED" && window.location.pathname !== "/change-password") {
+        window.location.href = "/change-password";
+      }
+    }
+    throw err;
+  }
+  return data as T;
+}
+
+export interface Loaded<T> {
+  data: T | null;
+  error: ApiError | null;
+  loading: boolean;
+  /** True while refetching with previous data still shown (no skeleton flash). */
+  refreshing: boolean;
+  reload: () => Promise<void>;
+  setData: (d: T) => void;
+}
+
+/**
+ * Loads `path` (null = skip). Keeps the previous data on screen while
+ * refetching. `refreshMs` polls, pausing while the tab is hidden.
+ */
+export function useApi<T = any>(path: string | null, opts: { refreshMs?: number } = {}): Loaded<T> {
+  const [data, setData] = useState<T | null>(null);
+  const [error, setError] = useState<ApiError | null>(null);
+  const [loading, setLoading] = useState(!!path);
+  const [refreshing, setRefreshing] = useState(false);
+  const seq = useRef(0);
+
+  const load = useCallback(async () => {
+    if (!path) return;
+    const mine = ++seq.current;
+    setRefreshing(true);
+    try {
+      const d = await api<T>(path);
+      if (mine === seq.current) {
+        setData(d);
+        setError(null);
+      }
+    } catch (e) {
+      if (mine === seq.current) setError(e instanceof ApiError ? e : new ApiError(0, "ERROR", String(e)));
+    } finally {
+      if (mine === seq.current) {
+        setLoading(false);
+        setRefreshing(false);
+      }
+    }
+  }, [path]);
+
+  useEffect(() => {
+    if (!path) {
+      setData(null);
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    void load();
+  }, [path, load]);
+
+  useEffect(() => {
+    if (!path || !opts.refreshMs) return;
+    const t = setInterval(() => {
+      if (document.visibilityState === "visible") void load();
+    }, opts.refreshMs);
+    return () => clearInterval(t);
+  }, [path, opts.refreshMs, load]);
+
+  return { data, error, loading, refreshing, reload: load, setData };
+}
+
+export function errorMessage(e: unknown): string {
+  return e instanceof Error ? e.message : "Something went wrong.";
+}
+
+/** Reads a nested value: get(row, "category.name"). */
+export function get(obj: any, path: string): any {
+  return path.split(".").reduce((o, k) => (o == null ? o : o[k]), obj);
+}
+
+export function qs(params: Record<string, string | number | boolean | null | undefined>): string {
+  const p = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== null && v !== "") p.set(k, String(v));
+  const s = p.toString();
+  return s ? `?${s}` : "";
+}

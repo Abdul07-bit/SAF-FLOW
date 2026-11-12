@@ -1,0 +1,1620 @@
+// SMARTAUTO FLEX - PostgreSQL schema
+//
+// Conventions
+//  * Every tenant-owned table has tenant_id (and branch_id where it applies).
+//  * Row-Level Security policies for every tenant table live in
+//    prisma/migrations/*_rls/migration.sql (Prisma cannot express RLS).
+//  * Money is stored as integer paise. Tax rates as basis points (500 = 5%).
+//  * Product-specific tables are prefixed dine_ / stay_ / bill_ so the SAF
+//    "products" table (Dine/Stay/Bill) never collides with retail products.
+
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "debian-openssl-3.0.x", "linux-musl-openssl-3.0.x"]
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// ===========================================================================
+// Enums
+// ===========================================================================
+
+enum UserKind {
+  PLATFORM
+  TENANT
+}
+
+enum TenantStatus {
+  ACTIVE
+  SUSPENDED
+  CLOSED
+}
+
+enum PlanTier {
+  BASIC
+  GROWTH
+}
+
+enum BillingCycle {
+  MONTHLY
+  ANNUAL
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  SUSPENDED
+  EXPIRED
+  CANCELLED
+}
+
+enum InvoiceKind {
+  SETUP
+  SUBSCRIPTION
+  PRORATION
+  OTHER
+}
+
+enum InvoiceStatus {
+  ISSUED
+  PAID
+  VOID
+}
+
+enum PaymentStatus {
+  PENDING
+  SUCCEEDED
+  FAILED
+  REFUNDED
+}
+
+enum PaymentMethod {
+  CASH
+  UPI
+  CARD
+  BANK_TRANSFER
+  CHEQUE
+  RAZORPAY
+  OTHER
+}
+
+enum TenderType {
+  CASH
+  UPI
+  CARD
+  WALLET
+  CREDIT
+  OTHER
+}
+
+enum EmployeeStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum AttendanceStatus {
+  PRESENT
+  LATE
+  HALF_DAY
+  ABSENT
+  ON_LEAVE
+}
+
+enum IdCardStatus {
+  ACTIVE
+  REVOKED
+}
+
+enum Priority {
+  LOW
+  NORMAL
+  HIGH
+  URGENT
+}
+
+enum TicketStatus {
+  OPEN
+  IN_PROGRESS
+  RESOLVED
+  CLOSED
+}
+
+enum PurchaseStatus {
+  ORDERED
+  RECEIVED
+  CANCELLED
+}
+
+// Dine
+enum DineTableStatus {
+  FREE
+  OCCUPIED
+  RESERVED
+  CLEANING
+}
+
+enum DineOrderType {
+  DINE_IN
+  TAKEAWAY
+  DELIVERY
+}
+
+enum DineOrderSource {
+  POS
+  WAITER
+  QR
+}
+
+enum DineOrderStatus {
+  OPEN
+  PAID
+  CANCELLED
+}
+
+enum DineItemStatus {
+  PENDING_ACCEPT
+  NEW
+  SENT
+  PREPARING
+  READY
+  SERVED
+  CANCELLED
+}
+
+enum KotStatus {
+  NEW
+  PREPARING
+  READY
+  SERVED
+  CANCELLED
+}
+
+enum StockKind {
+  INGREDIENT
+  PRODUCT
+}
+
+enum DineMovementType {
+  OPENING
+  PURCHASE
+  SALE
+  WASTAGE
+  ADJUSTMENT
+}
+
+// Stay
+enum RoomStatus {
+  AVAILABLE
+  OCCUPIED
+  OUT_OF_ORDER
+}
+
+enum HousekeepingStatus {
+  CLEAN
+  DIRTY
+  IN_PROGRESS
+  INSPECTED
+}
+
+enum ReservationStatus {
+  CONFIRMED
+  CHECKED_IN
+  CHECKED_OUT
+  CANCELLED
+  NO_SHOW
+}
+
+enum ChargeType {
+  ROOM
+  FOOD
+  LAUNDRY
+  MINIBAR
+  SERVICE
+  OTHER
+}
+
+enum TaskStatus {
+  PENDING
+  IN_PROGRESS
+  DONE
+  CANCELLED
+}
+
+enum MaintenanceStatus {
+  OPEN
+  IN_PROGRESS
+  RESOLVED
+  CLOSED
+}
+
+// Bill
+enum SaleStatus {
+  COMPLETED
+  VOID
+}
+
+enum BillMovementType {
+  OPENING
+  SALE
+  PURCHASE
+  ADJUSTMENT
+  VOID
+  TRANSFER_IN
+  TRANSFER_OUT
+}
+
+// ===========================================================================
+// Platform & tenancy
+// ===========================================================================
+
+model Tenant {
+  id              String       @id @default(uuid()) @db.Uuid
+  code            String       @unique
+  status          TenantStatus @default(ACTIVE)
+  suspendedReason String?      @map("suspended_reason")
+  createdAt       DateTime     @default(now()) @map("created_at")
+  updatedAt       DateTime     @updatedAt @map("updated_at")
+
+  business            Business?
+  branches            Branch[]
+  subscriptions       ProductSubscription[]
+  subscriptionEvents  SubscriptionEvent[]
+  tenantFeatures      TenantFeature[]
+  users               User[]
+  productAccess       UserProductAccess[]
+  sessions            Session[]
+  productSettings     TenantProductSetting[]
+  invoices            Invoice[]
+  payments            Payment[]
+  notifications       Notification[]
+  supportTickets      SupportTicket[]
+  supportMessages     SupportMessage[]
+  auditLogs           AuditLog[]
+  docSequences        DocSequence[]
+  employees           EmployeeProfile[]
+  shifts              StaffShift[]
+  shiftAssignments    ShiftAssignment[]
+  attendance          StaffAttendance[]
+  idCards             EmployeeIdCard[]
+  // Dine
+  dineTables          DineTable[]
+  dineCategories      DineMenuCategory[]
+  dineMenuItems       DineMenuItem[]
+  dineOrders          DineOrder[]
+  dineOrderItems      DineOrderItem[]
+  dineKitchenOrders   DineKitchenOrder[]
+  dineStockItems      DineStockItem[]
+  dineRecipeItems     DineRecipeItem[]
+  dineStockMovements  DineStockMovement[]
+  dineSuppliers       DineSupplier[]
+  dinePurchases       DinePurchase[]
+  dinePurchaseItems   DinePurchaseItem[]
+  dineWastage         DineWastage[]
+  // Stay
+  stayRoomTypes       StayRoomType[]
+  stayRooms           StayRoom[]
+  stayGuests          StayGuest[]
+  stayReservations    StayReservation[]
+  stayFolioCharges    StayFolioCharge[]
+  stayFolioPayments   StayFolioPayment[]
+  stayExpenses        StayExpense[]
+  stayHkTasks         StayHousekeepingTask[]
+  stayMaintenance     StayMaintenanceRecord[]
+  // Bill
+  billCategories      BillCategory[]
+  billProducts        BillProduct[]
+  billStockLevels     BillStockLevel[]
+  billStockMovements  BillStockMovement[]
+  billCustomers       BillCustomer[]
+  billCounters        BillCounter[]
+  billSales           BillSale[]
+  billSaleItems       BillSaleItem[]
+  billSuppliers       BillSupplier[]
+  billPurchases       BillPurchase[]
+  billPurchaseItems   BillPurchaseItem[]
+
+  @@map("tenants")
+}
+
+model Business {
+  tenantId  String   @id @map("tenant_id") @db.Uuid
+  name      String
+  category  String
+  ownerName String   @map("owner_name")
+  phone     String
+  email     String?
+  address   String?
+  city      String?
+  state     String?
+  pincode   String?
+  gstin     String?
+  logoKey   String?  @map("logo_key")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@map("businesses")
+}
+
+model Branch {
+  id        String   @id @default(uuid()) @db.Uuid
+  tenantId  String   @map("tenant_id") @db.Uuid
+  name      String
+  code      String
+  address   String?
+  phone     String?
+  isMain    Boolean  @default(false) @map("is_main")
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  dineTables       DineTable[]
+  dineOrders       DineOrder[]
+  stayRooms        StayRoom[]
+  stayReservations StayReservation[]
+  billStockLevels  BillStockLevel[]
+  billCounters     BillCounter[]
+  billSales        BillSale[]
+
+  @@unique([tenantId, code])
+  @@index([tenantId])
+  @@map("branches")
+}
+
+// SAF products: dine / stay / bill
+model Product {
+  code        String   @id
+  name        String
+  tagline     String
+  description String
+  isActive    Boolean  @default(true) @map("is_active")
+  sortOrder   Int      @default(0) @map("sort_order")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  plans         Plan[]
+  features      FeatureCatalog[]
+  subscriptions ProductSubscription[]
+
+  @@map("products")
+}
+
+model Plan {
+  id           String   @id @default(uuid()) @db.Uuid
+  productCode  String   @map("product_code")
+  tier         PlanTier
+  name         String
+  description  String?
+  monthlyPrice Int      @map("monthly_price")
+  annualPrice  Int      @map("annual_price")
+  setupFee     Int      @map("setup_fee")
+  graceDays    Int      @default(7) @map("grace_days")
+  isActive     Boolean  @default(true) @map("is_active")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  product       Product               @relation(fields: [productCode], references: [code])
+  features      PlanFeature[]
+  subscriptions ProductSubscription[] @relation("CurrentPlan")
+  pendingSubs   ProductSubscription[] @relation("PendingPlan")
+
+  @@unique([productCode, tier])
+  @@map("plans")
+}
+
+model FeatureCatalog {
+  key         String   @id
+  productCode String   @map("product_code")
+  name        String
+  groupName   String   @map("group_name")
+  defaultTier PlanTier @map("default_tier")
+  sortOrder   Int      @default(0) @map("sort_order")
+
+  product        Product         @relation(fields: [productCode], references: [code])
+  planFeatures   PlanFeature[]
+  tenantFeatures TenantFeature[]
+
+  @@map("feature_catalog")
+}
+
+model PlanFeature {
+  planId     String @map("plan_id") @db.Uuid
+  featureKey String @map("feature_key")
+
+  plan    Plan           @relation(fields: [planId], references: [id], onDelete: Cascade)
+  feature FeatureCatalog @relation(fields: [featureKey], references: [key], onDelete: Cascade)
+
+  @@id([planId, featureKey])
+  @@map("plan_features")
+}
+
+// Per-tenant override: enabled=true grants a feature outside the plan,
+// enabled=false revokes a feature that the plan includes.
+model TenantFeature {
+  tenantId   String   @map("tenant_id") @db.Uuid
+  featureKey String   @map("feature_key")
+  enabled    Boolean
+  note       String?
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  tenant  Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  feature FeatureCatalog @relation(fields: [featureKey], references: [key], onDelete: Cascade)
+
+  @@id([tenantId, featureKey])
+  @@map("tenant_features")
+}
+
+model ProductSubscription {
+  id                  String             @id @default(uuid()) @db.Uuid
+  tenantId            String             @map("tenant_id") @db.Uuid
+  productCode         String             @map("product_code")
+  planId              String             @map("plan_id") @db.Uuid
+  billingCycle        BillingCycle       @map("billing_cycle")
+  status              SubscriptionStatus @default(ACTIVE)
+  startDate           DateTime           @map("start_date")
+  currentPeriodStart  DateTime           @map("current_period_start")
+  currentPeriodEnd    DateTime           @map("current_period_end")
+  graceDays           Int?               @map("grace_days")
+  setupFee            Int                @default(0) @map("setup_fee")
+  pendingPlanId       String?            @map("pending_plan_id") @db.Uuid
+  pendingBillingCycle BillingCycle?      @map("pending_billing_cycle")
+  autoRenew           Boolean            @default(true) @map("auto_renew")
+  suspendedAt         DateTime?          @map("suspended_at")
+  suspendedReason     String?            @map("suspended_reason")
+  cancelledAt         DateTime?          @map("cancelled_at")
+  lastReminderAt      DateTime?          @map("last_reminder_at")
+  createdAt           DateTime           @default(now()) @map("created_at")
+  updatedAt           DateTime           @updatedAt @map("updated_at")
+
+  tenant      Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  product     Product             @relation(fields: [productCode], references: [code])
+  plan        Plan                @relation("CurrentPlan", fields: [planId], references: [id])
+  pendingPlan Plan?               @relation("PendingPlan", fields: [pendingPlanId], references: [id])
+  events      SubscriptionEvent[]
+  invoices    Invoice[]
+  payments    Payment[]
+
+  @@unique([tenantId, productCode])
+  @@index([currentPeriodEnd])
+  @@map("product_subscriptions")
+}
+
+model SubscriptionEvent {
+  id             String   @id @default(uuid()) @db.Uuid
+  tenantId       String   @map("tenant_id") @db.Uuid
+  subscriptionId String   @map("subscription_id") @db.Uuid
+  type           String
+  meta           Json?
+  actorId        String?  @map("actor_id") @db.Uuid
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  tenant       Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  subscription ProductSubscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, createdAt])
+  @@map("subscription_events")
+}
+
+model TenantProductSetting {
+  tenantId    String   @map("tenant_id") @db.Uuid
+  productCode String   @map("product_code")
+  settings    Json     @default("{}")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@id([tenantId, productCode])
+  @@map("tenant_product_settings")
+}
+
+model PlatformSetting {
+  key       String   @id
+  value     Json
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("platform_settings")
+}
+
+// Atomic document numbering (order numbers, invoice numbers...).
+model DocSequence {
+  scope    String  @id
+  tenantId String? @map("tenant_id") @db.Uuid
+  value    Int     @default(0)
+
+  tenant Tenant? @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@map("doc_sequences")
+}
+
+// ===========================================================================
+// Identity & access
+// ===========================================================================
+
+model User {
+  id                 String    @id @default(uuid()) @db.Uuid
+  tenantId           String?   @map("tenant_id") @db.Uuid
+  kind               UserKind
+  username           String    @unique
+  passwordHash       String    @map("password_hash")
+  fullName           String    @map("full_name")
+  email              String?
+  phone              String?
+  platformRole       String?   @map("platform_role")
+  isTenantOwner      Boolean   @default(false) @map("is_tenant_owner")
+  isActive           Boolean   @default(true) @map("is_active")
+  mustChangePassword Boolean   @default(true) @map("must_change_password")
+  failedLoginCount   Int       @default(0) @map("failed_login_count")
+  lockedUntil        DateTime? @map("locked_until")
+  lastLoginAt        DateTime? @map("last_login_at")
+  passwordChangedAt  DateTime? @map("password_changed_at")
+  createdAt          DateTime  @default(now()) @map("created_at")
+  updatedAt          DateTime  @updatedAt @map("updated_at")
+
+  tenant          Tenant?                 @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  productAccess   UserProductAccess[]
+  sessions        Session[]
+  employeeProfile EmployeeProfile?
+  waiterOrders    DineOrder[]             @relation("OrderWaiter")
+  cashierSales    BillSale[]              @relation("SaleCashier")
+  hkTasks         StayHousekeepingTask[]  @relation("HkAssignee")
+  maintenanceJobs StayMaintenanceRecord[] @relation("MaintAssignee")
+
+  @@index([tenantId])
+  @@map("users")
+}
+
+model Role {
+  id          String  @id @default(uuid()) @db.Uuid
+  productCode String  @map("product_code")
+  code        String
+  name        String
+  description String?
+  homeScreen  String  @default("") @map("home_screen")
+  isSystem    Boolean @default(true) @map("is_system")
+
+  permissions RolePermission[]
+  access      UserProductAccess[]
+
+  @@unique([productCode, code])
+  @@map("roles")
+}
+
+model Permission {
+  key         String @id
+  productCode String @map("product_code")
+  name        String
+
+  roles RolePermission[]
+
+  @@map("permissions")
+}
+
+model RolePermission {
+  roleId        String @map("role_id") @db.Uuid
+  permissionKey String @map("permission_key")
+
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionKey], references: [key], onDelete: Cascade)
+
+  @@id([roleId, permissionKey])
+  @@map("role_permissions")
+}
+
+// Which SAF product a user may open, and with which role. Permissions are
+// therefore maintained separately for each product.
+model UserProductAccess {
+  id          String   @id @default(uuid()) @db.Uuid
+  tenantId    String   @map("tenant_id") @db.Uuid
+  userId      String   @map("user_id") @db.Uuid
+  productCode String   @map("product_code")
+  roleId      String   @map("role_id") @db.Uuid
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role   Role   @relation(fields: [roleId], references: [id])
+
+  @@unique([userId, productCode])
+  @@index([tenantId, productCode])
+  @@map("user_product_access")
+}
+
+model Session {
+  id         String    @id @default(uuid()) @db.Uuid
+  tokenHash  String    @unique @map("token_hash")
+  userId     String    @map("user_id") @db.Uuid
+  tenantId   String?   @map("tenant_id") @db.Uuid
+  ip         String?
+  userAgent  String?   @map("user_agent")
+  createdAt  DateTime  @default(now()) @map("created_at")
+  lastSeenAt DateTime  @default(now()) @map("last_seen_at")
+  expiresAt  DateTime  @map("expires_at")
+  revokedAt  DateTime? @map("revoked_at")
+
+  user   User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tenant Tenant? @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("sessions")
+}
+
+model AuditLog {
+  id          BigInt   @id @default(autoincrement())
+  tenantId    String?  @map("tenant_id") @db.Uuid
+  actorId     String?  @map("actor_id") @db.Uuid
+  actorName   String?  @map("actor_name")
+  action      String
+  entityType  String?  @map("entity_type")
+  entityId    String?  @map("entity_id")
+  productCode String?  @map("product_code")
+  ip          String?
+  userAgent   String?  @map("user_agent")
+  meta        Json?
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  tenant Tenant? @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, createdAt])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
+
+model Notification {
+  id          String    @id @default(uuid()) @db.Uuid
+  tenantId    String    @map("tenant_id") @db.Uuid
+  userId      String?   @map("user_id") @db.Uuid
+  productCode String?   @map("product_code")
+  kind        String
+  title       String
+  body        String
+  link        String?
+  readAt      DateTime? @map("read_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, createdAt])
+  @@map("notifications")
+}
+
+// ===========================================================================
+// SAF billing (platform charges to tenants)
+// ===========================================================================
+
+model Invoice {
+  id             String        @id @default(uuid()) @db.Uuid
+  tenantId       String        @map("tenant_id") @db.Uuid
+  subscriptionId String?       @map("subscription_id") @db.Uuid
+  invoiceNo      String        @unique @map("invoice_no")
+  kind           InvoiceKind
+  productCode    String?       @map("product_code")
+  description    String
+  planId         String?       @map("plan_id") @db.Uuid
+  billingCycle   BillingCycle? @map("billing_cycle")
+  periodStart    DateTime?     @map("period_start")
+  periodEnd      DateTime?     @map("period_end")
+  subtotal       Int
+  taxAmount      Int           @default(0) @map("tax_amount")
+  total          Int
+  status         InvoiceStatus @default(ISSUED)
+  dueDate        DateTime      @map("due_date")
+  paidAt         DateTime?     @map("paid_at")
+  createdAt      DateTime      @default(now()) @map("created_at")
+
+  tenant       Tenant               @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  subscription ProductSubscription? @relation(fields: [subscriptionId], references: [id], onDelete: SetNull)
+  payments     Payment[]
+
+  @@index([tenantId, createdAt])
+  @@map("invoices")
+}
+
+model Payment {
+  id               String        @id @default(uuid()) @db.Uuid
+  tenantId         String        @map("tenant_id") @db.Uuid
+  invoiceId        String?       @map("invoice_id") @db.Uuid
+  subscriptionId   String?       @map("subscription_id") @db.Uuid
+  amount           Int
+  method           PaymentMethod
+  status           PaymentStatus @default(SUCCEEDED)
+  reference        String?
+  gatewayOrderId   String?       @unique @map("gateway_order_id")
+  gatewayPaymentId String?       @map("gateway_payment_id")
+  notes            String?
+  paidAt           DateTime?     @map("paid_at")
+  recordedById     String?       @map("recorded_by_id") @db.Uuid
+  createdAt        DateTime      @default(now()) @map("created_at")
+
+  tenant       Tenant               @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  invoice      Invoice?             @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
+  subscription ProductSubscription? @relation(fields: [subscriptionId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId, createdAt])
+  @@map("payments")
+}
+
+model SupportTicket {
+  id          String       @id @default(uuid()) @db.Uuid
+  tenantId    String       @map("tenant_id") @db.Uuid
+  ticketNo    Int          @map("ticket_no")
+  productCode String?      @map("product_code")
+  category    String       @default("GENERAL")
+  subject     String
+  priority    Priority     @default(NORMAL)
+  status      TicketStatus @default(OPEN)
+  createdById String?      @map("created_by_id") @db.Uuid
+  createdAt   DateTime     @default(now()) @map("created_at")
+  updatedAt   DateTime     @updatedAt @map("updated_at")
+
+  tenant   Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  messages SupportMessage[]
+
+  @@unique([tenantId, ticketNo])
+  @@map("support_tickets")
+}
+
+model SupportMessage {
+  id         String   @id @default(uuid()) @db.Uuid
+  tenantId   String   @map("tenant_id") @db.Uuid
+  ticketId   String   @map("ticket_id") @db.Uuid
+  authorId   String?  @map("author_id") @db.Uuid
+  authorName String   @map("author_name")
+  fromSaf    Boolean  @default(false) @map("from_saf")
+  body       String
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  tenant Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  ticket SupportTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+
+  @@map("support_messages")
+}
+
+// ===========================================================================
+// Shared staff management (Growth)
+// ===========================================================================
+
+model EmployeeProfile {
+  id               String         @id @default(uuid()) @db.Uuid
+  tenantId         String         @map("tenant_id") @db.Uuid
+  branchId         String?        @map("branch_id") @db.Uuid
+  userId           String?        @unique @map("user_id") @db.Uuid
+  employeeCode     String         @map("employee_code")
+  fullName         String         @map("full_name")
+  designation      String
+  department       String?
+  phone            String?
+  email            String?
+  address          String?
+  bloodGroup       String?        @map("blood_group")
+  emergencyContact String?        @map("emergency_contact")
+  dateOfJoining    DateTime?      @map("date_of_joining") @db.Date
+  photoKey         String?        @map("photo_key")
+  productCodes     String[]       @map("product_codes")
+  status           EmployeeStatus @default(ACTIVE)
+  qrToken          String         @unique @map("qr_token")
+  createdAt        DateTime       @default(now()) @map("created_at")
+  updatedAt        DateTime       @updatedAt @map("updated_at")
+
+  tenant      Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user        User?             @relation(fields: [userId], references: [id], onDelete: SetNull)
+  attendance  StaffAttendance[]
+  assignments ShiftAssignment[]
+  idCards     EmployeeIdCard[]
+
+  @@unique([tenantId, employeeCode])
+  @@index([tenantId])
+  @@map("employee_profiles")
+}
+
+model StaffShift {
+  id           String   @id @default(uuid()) @db.Uuid
+  tenantId     String   @map("tenant_id") @db.Uuid
+  productCode  String   @map("product_code")
+  name         String
+  startTime    String   @map("start_time")
+  endTime      String   @map("end_time")
+  graceMinutes Int      @default(10) @map("grace_minutes")
+  isActive     Boolean  @default(true) @map("is_active")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  tenant      Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  assignments ShiftAssignment[]
+  attendance  StaffAttendance[]
+
+  @@index([tenantId, productCode])
+  @@map("staff_shifts")
+}
+
+model ShiftAssignment {
+  id          String   @id @default(uuid()) @db.Uuid
+  tenantId    String   @map("tenant_id") @db.Uuid
+  employeeId  String   @map("employee_id") @db.Uuid
+  shiftId     String   @map("shift_id") @db.Uuid
+  productCode String   @map("product_code")
+  date        DateTime @db.Date
+  notes       String?
+
+  tenant   Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  employee EmployeeProfile @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  shift    StaffShift      @relation(fields: [shiftId], references: [id], onDelete: Cascade)
+
+  @@unique([employeeId, date])
+  @@index([tenantId, date])
+  @@map("shift_assignments")
+}
+
+model StaffAttendance {
+  id            String           @id @default(uuid()) @db.Uuid
+  tenantId      String           @map("tenant_id") @db.Uuid
+  branchId      String?          @map("branch_id") @db.Uuid
+  employeeId    String           @map("employee_id") @db.Uuid
+  productCode   String           @map("product_code")
+  shiftId       String?          @map("shift_id") @db.Uuid
+  date          DateTime         @db.Date
+  checkInAt     DateTime?        @map("check_in_at")
+  checkOutAt    DateTime?        @map("check_out_at")
+  status        AttendanceStatus @default(PRESENT)
+  lateMinutes   Int              @default(0) @map("late_minutes")
+  workedMinutes Int              @default(0) @map("worked_minutes")
+  source        String           @default("SELF")
+  notes         String?
+  createdAt     DateTime         @default(now()) @map("created_at")
+  updatedAt     DateTime         @updatedAt @map("updated_at")
+
+  tenant   Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  employee EmployeeProfile @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  shift    StaffShift?     @relation(fields: [shiftId], references: [id], onDelete: SetNull)
+
+  @@unique([employeeId, date])
+  @@index([tenantId, date])
+  @@map("staff_attendance")
+}
+
+model EmployeeIdCard {
+  id          String       @id @default(uuid()) @db.Uuid
+  tenantId    String       @map("tenant_id") @db.Uuid
+  employeeId  String       @map("employee_id") @db.Uuid
+  cardNumber  String       @map("card_number")
+  issuedAt    DateTime     @default(now()) @map("issued_at")
+  validUntil  DateTime     @map("valid_until")
+  status      IdCardStatus @default(ACTIVE)
+  issuedById  String?      @map("issued_by_id") @db.Uuid
+  productCode String       @map("product_code")
+
+  tenant   Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  employee EmployeeProfile @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, cardNumber])
+  @@map("employee_id_cards")
+}
+
+// ===========================================================================
+// SAF DINE FLOW
+// ===========================================================================
+
+model DineTable {
+  id        String          @id @default(uuid()) @db.Uuid
+  tenantId  String          @map("tenant_id") @db.Uuid
+  branchId  String          @map("branch_id") @db.Uuid
+  name      String
+  seats     Int             @default(4)
+  area      String?
+  status    DineTableStatus @default(FREE)
+  qrToken   String          @unique @map("qr_token")
+  isActive  Boolean         @default(true) @map("is_active")
+  sortOrder Int             @default(0) @map("sort_order")
+  createdAt DateTime        @default(now()) @map("created_at")
+
+  tenant Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  branch Branch      @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  orders DineOrder[]
+
+  @@unique([tenantId, branchId, name])
+  @@map("dine_tables")
+}
+
+model DineMenuCategory {
+  id        String  @id @default(uuid()) @db.Uuid
+  tenantId  String  @map("tenant_id") @db.Uuid
+  name      String
+  sortOrder Int     @default(0) @map("sort_order")
+  isActive  Boolean @default(true) @map("is_active")
+
+  tenant Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  items  DineMenuItem[]
+
+  @@unique([tenantId, name])
+  @@map("dine_menu_categories")
+}
+
+model DineMenuItem {
+  id          String   @id @default(uuid()) @db.Uuid
+  tenantId    String   @map("tenant_id") @db.Uuid
+  categoryId  String   @map("category_id") @db.Uuid
+  name        String
+  description String?
+  price       Int
+  taxRate     Int      @default(500) @map("tax_rate")
+  isVeg       Boolean  @default(true) @map("is_veg")
+  isAvailable Boolean  @default(true) @map("is_available")
+  isActive    Boolean  @default(true) @map("is_active")
+  prepMinutes Int      @default(15) @map("prep_minutes")
+  // Product management: a packaged/retail item linked 1:1 to a stock item.
+  stockItemId String?  @map("stock_item_id") @db.Uuid
+  sortOrder   Int      @default(0) @map("sort_order")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  tenant     Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  category   DineMenuCategory @relation(fields: [categoryId], references: [id])
+  stockItem  DineStockItem?   @relation("ProductStock", fields: [stockItemId], references: [id], onDelete: SetNull)
+  recipe     DineRecipeItem[]
+  orderItems DineOrderItem[]
+
+  @@index([tenantId, categoryId])
+  @@map("dine_menu_items")
+}
+
+model DineOrder {
+  id              String          @id @default(uuid()) @db.Uuid
+  tenantId        String          @map("tenant_id") @db.Uuid
+  branchId        String          @map("branch_id") @db.Uuid
+  orderNo         Int             @map("order_no")
+  tableId         String?         @map("table_id") @db.Uuid
+  type            DineOrderType   @default(DINE_IN)
+  source          DineOrderSource @default(POS)
+  status          DineOrderStatus @default(OPEN)
+  customerName    String?         @map("customer_name")
+  customerPhone   String?         @map("customer_phone")
+  guests          Int             @default(1)
+  waiterId        String?         @map("waiter_id") @db.Uuid
+  createdById     String?         @map("created_by_id") @db.Uuid
+  subtotal        Int             @default(0)
+  taxTotal        Int             @default(0) @map("tax_total")
+  discount        Int             @default(0)
+  total           Int             @default(0)
+  paymentMethod   TenderType?     @map("payment_method")
+  paidAt          DateTime?       @map("paid_at")
+  settledById     String?         @map("settled_by_id") @db.Uuid
+  invoiceNo       String?         @map("invoice_no")
+  publicToken     String          @unique @map("public_token")
+  notes           String?
+  cancelledReason String?         @map("cancelled_reason")
+  createdAt       DateTime        @default(now()) @map("created_at")
+  updatedAt       DateTime        @updatedAt @map("updated_at")
+
+  tenant  Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  branch  Branch             @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  table   DineTable?         @relation(fields: [tableId], references: [id], onDelete: SetNull)
+  waiter  User?              @relation("OrderWaiter", fields: [waiterId], references: [id], onDelete: SetNull)
+  items   DineOrderItem[]
+  tickets DineKitchenOrder[]
+
+  @@unique([tenantId, orderNo])
+  @@index([tenantId, status])
+  @@index([tenantId, createdAt])
+  @@map("dine_orders")
+}
+
+model DineOrderItem {
+  id         String         @id @default(uuid()) @db.Uuid
+  tenantId   String         @map("tenant_id") @db.Uuid
+  orderId    String         @map("order_id") @db.Uuid
+  menuItemId String         @map("menu_item_id") @db.Uuid
+  kotId      String?        @map("kot_id") @db.Uuid
+  name       String
+  unitPrice  Int            @map("unit_price")
+  taxRate    Int            @map("tax_rate")
+  qty        Int
+  notes      String?
+  status     DineItemStatus @default(NEW)
+  createdAt  DateTime       @default(now()) @map("created_at")
+
+  tenant   Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  order    DineOrder         @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  menuItem DineMenuItem      @relation(fields: [menuItemId], references: [id])
+  kot      DineKitchenOrder? @relation(fields: [kotId], references: [id], onDelete: SetNull)
+
+  @@index([orderId])
+  @@map("dine_order_items")
+}
+
+// Kitchen Order Tickets (KOT) shown on the Kitchen Display System.
+model DineKitchenOrder {
+  id        String    @id @default(uuid()) @db.Uuid
+  tenantId  String    @map("tenant_id") @db.Uuid
+  branchId  String    @map("branch_id") @db.Uuid
+  orderId   String    @map("order_id") @db.Uuid
+  kotNo     Int       @map("kot_no")
+  status    KotStatus @default(NEW)
+  label     String
+  notes     String?
+  createdAt DateTime  @default(now()) @map("created_at")
+  startedAt DateTime? @map("started_at")
+  readyAt   DateTime? @map("ready_at")
+  servedAt  DateTime? @map("served_at")
+
+  tenant Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  order  DineOrder       @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  items  DineOrderItem[]
+
+  @@index([tenantId, status])
+  @@map("dine_kitchen_orders")
+}
+
+// Stock: ingredients (kind=INGREDIENT) and packaged products (kind=PRODUCT).
+model DineStockItem {
+  id           String    @id @default(uuid()) @db.Uuid
+  tenantId     String    @map("tenant_id") @db.Uuid
+  name         String
+  kind         StockKind @default(INGREDIENT)
+  unit         String    @default("pcs")
+  quantity     Float     @default(0)
+  reorderLevel Float     @default(0) @map("reorder_level")
+  costPerUnit  Int       @default(0) @map("cost_per_unit")
+  supplierId   String?   @map("supplier_id") @db.Uuid
+  isActive     Boolean   @default(true) @map("is_active")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+
+  tenant        Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  supplier      DineSupplier?       @relation(fields: [supplierId], references: [id], onDelete: SetNull)
+  products      DineMenuItem[]      @relation("ProductStock")
+  recipeUses    DineRecipeItem[]
+  movements     DineStockMovement[]
+  purchaseItems DinePurchaseItem[]
+  wastage       DineWastage[]
+
+  @@unique([tenantId, name])
+  @@map("dine_stock_items")
+}
+
+model DineRecipeItem {
+  id          String @id @default(uuid()) @db.Uuid
+  tenantId    String @map("tenant_id") @db.Uuid
+  menuItemId  String @map("menu_item_id") @db.Uuid
+  stockItemId String @map("stock_item_id") @db.Uuid
+  quantity    Float
+
+  tenant    Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  menuItem  DineMenuItem  @relation(fields: [menuItemId], references: [id], onDelete: Cascade)
+  stockItem DineStockItem @relation(fields: [stockItemId], references: [id], onDelete: Cascade)
+
+  @@unique([menuItemId, stockItemId])
+  @@map("dine_recipe_items")
+}
+
+model DineStockMovement {
+  id           String           @id @default(uuid()) @db.Uuid
+  tenantId     String           @map("tenant_id") @db.Uuid
+  stockItemId  String           @map("stock_item_id") @db.Uuid
+  type         DineMovementType
+  quantity     Float
+  balanceAfter Float            @map("balance_after")
+  reference    String?
+  reason       String?
+  userId       String?          @map("user_id") @db.Uuid
+  createdAt    DateTime         @default(now()) @map("created_at")
+
+  tenant    Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  stockItem DineStockItem @relation(fields: [stockItemId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, createdAt])
+  @@map("dine_stock_movements")
+}
+
+model DineSupplier {
+  id            String   @id @default(uuid()) @db.Uuid
+  tenantId      String   @map("tenant_id") @db.Uuid
+  name          String
+  contactPerson String?  @map("contact_person")
+  phone         String?
+  email         String?
+  address       String?
+  gstin         String?
+  isActive      Boolean  @default(true) @map("is_active")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  tenant     Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  stockItems DineStockItem[]
+  purchases  DinePurchase[]
+
+  @@map("dine_suppliers")
+}
+
+model DinePurchase {
+  id          String         @id @default(uuid()) @db.Uuid
+  tenantId    String         @map("tenant_id") @db.Uuid
+  purchaseNo  Int            @map("purchase_no")
+  supplierId  String         @map("supplier_id") @db.Uuid
+  status      PurchaseStatus @default(ORDERED)
+  invoiceRef  String?        @map("invoice_ref")
+  total       Int            @default(0)
+  notes       String?
+  orderedAt   DateTime       @default(now()) @map("ordered_at")
+  receivedAt  DateTime?      @map("received_at")
+  createdById String?        @map("created_by_id") @db.Uuid
+
+  tenant   Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  supplier DineSupplier       @relation(fields: [supplierId], references: [id])
+  items    DinePurchaseItem[]
+
+  @@unique([tenantId, purchaseNo])
+  @@map("dine_purchases")
+}
+
+model DinePurchaseItem {
+  id          String @id @default(uuid()) @db.Uuid
+  tenantId    String @map("tenant_id") @db.Uuid
+  purchaseId  String @map("purchase_id") @db.Uuid
+  stockItemId String @map("stock_item_id") @db.Uuid
+  quantity    Float
+  unitCost    Int    @map("unit_cost")
+
+  tenant    Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  purchase  DinePurchase  @relation(fields: [purchaseId], references: [id], onDelete: Cascade)
+  stockItem DineStockItem @relation(fields: [stockItemId], references: [id])
+
+  @@map("dine_purchase_items")
+}
+
+model DineWastage {
+  id           String   @id @default(uuid()) @db.Uuid
+  tenantId     String   @map("tenant_id") @db.Uuid
+  stockItemId  String   @map("stock_item_id") @db.Uuid
+  quantity     Float
+  reason       String
+  costValue    Int      @map("cost_value")
+  recordedById String?  @map("recorded_by_id") @db.Uuid
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  tenant    Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  stockItem DineStockItem @relation(fields: [stockItemId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, createdAt])
+  @@map("dine_wastage")
+}
+
+// ===========================================================================
+// SAF STAY FLOW
+// ===========================================================================
+
+model StayRoomType {
+  id          String   @id @default(uuid()) @db.Uuid
+  tenantId    String   @map("tenant_id") @db.Uuid
+  name        String
+  description String?
+  baseRate    Int      @map("base_rate")
+  maxAdults   Int      @default(2) @map("max_adults")
+  maxChildren Int      @default(1) @map("max_children")
+  amenities   String[]
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  tenant       Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  rooms        StayRoom[]
+  reservations StayReservation[]
+
+  @@unique([tenantId, name])
+  @@map("stay_room_types")
+}
+
+model StayRoom {
+  id         String             @id @default(uuid()) @db.Uuid
+  tenantId   String             @map("tenant_id") @db.Uuid
+  branchId   String             @map("branch_id") @db.Uuid
+  roomTypeId String             @map("room_type_id") @db.Uuid
+  number     String
+  floor      String?
+  status     RoomStatus         @default(AVAILABLE)
+  hkStatus   HousekeepingStatus @default(CLEAN) @map("hk_status")
+  notes      String?
+  isActive   Boolean            @default(true) @map("is_active")
+  createdAt  DateTime           @default(now()) @map("created_at")
+
+  tenant       Tenant                  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  branch       Branch                  @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  roomType     StayRoomType            @relation(fields: [roomTypeId], references: [id])
+  reservations StayReservation[]
+  hkTasks      StayHousekeepingTask[]
+  maintenance  StayMaintenanceRecord[]
+
+  @@unique([tenantId, branchId, number])
+  @@map("stay_rooms")
+}
+
+model StayGuest {
+  id          String   @id @default(uuid()) @db.Uuid
+  tenantId    String   @map("tenant_id") @db.Uuid
+  fullName    String   @map("full_name")
+  phone       String
+  email       String?
+  address     String?
+  city        String?
+  nationality String?  @default("Indian")
+  idType      String?  @map("id_type")
+  idNumber    String?  @map("id_number")
+  company     String?
+  gstin       String?
+  isVip       Boolean  @default(false) @map("is_vip")
+  notes       String?
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  tenant       Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  reservations StayReservation[]
+
+  @@index([tenantId, phone])
+  @@map("stay_guests")
+}
+
+model StayReservation {
+  id              String            @id @default(uuid()) @db.Uuid
+  tenantId        String            @map("tenant_id") @db.Uuid
+  branchId        String            @map("branch_id") @db.Uuid
+  reservationNo   Int               @map("reservation_no")
+  guestId         String            @map("guest_id") @db.Uuid
+  roomTypeId      String            @map("room_type_id") @db.Uuid
+  roomId          String?           @map("room_id") @db.Uuid
+  checkInDate     DateTime          @map("check_in_date") @db.Date
+  checkOutDate    DateTime          @map("check_out_date") @db.Date
+  adults          Int               @default(1)
+  children        Int               @default(0)
+  ratePerNight    Int               @map("rate_per_night")
+  taxRate         Int               @default(1200) @map("tax_rate")
+  status          ReservationStatus @default(CONFIRMED)
+  source          String            @default("WALK_IN")
+  specialRequests String?           @map("special_requests")
+  checkedInAt     DateTime?         @map("checked_in_at")
+  checkedOutAt    DateTime?         @map("checked_out_at")
+  invoiceNo       String?           @map("invoice_no")
+  publicToken     String            @unique @map("public_token")
+  cancelledReason String?           @map("cancelled_reason")
+  createdById     String?           @map("created_by_id") @db.Uuid
+  createdAt       DateTime          @default(now()) @map("created_at")
+  updatedAt       DateTime          @updatedAt @map("updated_at")
+
+  tenant   Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  branch   Branch             @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  guest    StayGuest          @relation(fields: [guestId], references: [id])
+  roomType StayRoomType       @relation(fields: [roomTypeId], references: [id])
+  room     StayRoom?          @relation(fields: [roomId], references: [id], onDelete: SetNull)
+  charges  StayFolioCharge[]
+  payments StayFolioPayment[]
+
+  @@unique([tenantId, reservationNo])
+  @@index([tenantId, checkInDate, checkOutDate])
+  @@index([tenantId, status])
+  @@map("stay_reservations")
+}
+
+model StayFolioCharge {
+  id            String     @id @default(uuid()) @db.Uuid
+  tenantId      String     @map("tenant_id") @db.Uuid
+  reservationId String     @map("reservation_id") @db.Uuid
+  type          ChargeType
+  description   String
+  amount        Int
+  taxRate       Int        @default(0) @map("tax_rate")
+  chargeDate    DateTime   @default(now()) @map("charge_date")
+  createdById   String?    @map("created_by_id") @db.Uuid
+
+  tenant      Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  reservation StayReservation @relation(fields: [reservationId], references: [id], onDelete: Cascade)
+
+  @@map("stay_folio_charges")
+}
+
+model StayFolioPayment {
+  id            String     @id @default(uuid()) @db.Uuid
+  tenantId      String     @map("tenant_id") @db.Uuid
+  reservationId String     @map("reservation_id") @db.Uuid
+  amount        Int
+  method        TenderType
+  reference     String?
+  receivedById  String?    @map("received_by_id") @db.Uuid
+  createdAt     DateTime   @default(now()) @map("created_at")
+
+  tenant      Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  reservation StayReservation @relation(fields: [reservationId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, createdAt])
+  @@map("stay_folio_payments")
+}
+
+model StayExpense {
+  id          String     @id @default(uuid()) @db.Uuid
+  tenantId    String     @map("tenant_id") @db.Uuid
+  branchId    String?    @map("branch_id") @db.Uuid
+  category    String
+  description String
+  amount      Int
+  expenseDate DateTime   @map("expense_date") @db.Date
+  paidTo      String?    @map("paid_to")
+  method      TenderType @default(CASH)
+  createdById String?    @map("created_by_id") @db.Uuid
+  createdAt   DateTime   @default(now()) @map("created_at")
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, expenseDate])
+  @@map("stay_expenses")
+}
+
+model StayHousekeepingTask {
+  id           String     @id @default(uuid()) @db.Uuid
+  tenantId     String     @map("tenant_id") @db.Uuid
+  roomId       String     @map("room_id") @db.Uuid
+  type         String     @default("CLEANING")
+  priority     Priority   @default(NORMAL)
+  status       TaskStatus @default(PENDING)
+  assignedToId String?    @map("assigned_to_id") @db.Uuid
+  notes        String?
+  dueAt        DateTime?  @map("due_at")
+  startedAt    DateTime?  @map("started_at")
+  completedAt  DateTime?  @map("completed_at")
+  createdById  String?    @map("created_by_id") @db.Uuid
+  createdAt    DateTime   @default(now()) @map("created_at")
+
+  tenant     Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  room       StayRoom @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  assignedTo User?    @relation("HkAssignee", fields: [assignedToId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId, status])
+  @@map("stay_housekeeping_tasks")
+}
+
+model StayMaintenanceRecord {
+  id             String            @id @default(uuid()) @db.Uuid
+  tenantId       String            @map("tenant_id") @db.Uuid
+  roomId         String?           @map("room_id") @db.Uuid
+  title          String
+  description    String?
+  priority       Priority          @default(NORMAL)
+  status         MaintenanceStatus @default(OPEN)
+  assignedToId   String?           @map("assigned_to_id") @db.Uuid
+  reportedById   String?           @map("reported_by_id") @db.Uuid
+  roomOutOfOrder Boolean           @default(false) @map("room_out_of_order")
+  cost           Int               @default(0)
+  resolution     String?
+  resolvedAt     DateTime?         @map("resolved_at")
+  createdAt      DateTime          @default(now()) @map("created_at")
+  updatedAt      DateTime          @updatedAt @map("updated_at")
+
+  tenant     Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  room       StayRoom? @relation(fields: [roomId], references: [id], onDelete: SetNull)
+  assignedTo User?     @relation("MaintAssignee", fields: [assignedToId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId, status])
+  @@map("stay_maintenance_records")
+}
+
+// ===========================================================================
+// SAF BILL FLOW
+// ===========================================================================
+
+model BillCategory {
+  id       String  @id @default(uuid()) @db.Uuid
+  tenantId String  @map("tenant_id") @db.Uuid
+  name     String
+  isActive Boolean @default(true) @map("is_active")
+
+  tenant   Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  products BillProduct[]
+
+  @@unique([tenantId, name])
+  @@map("bill_categories")
+}
+
+model BillProduct {
+  id           String   @id @default(uuid()) @db.Uuid
+  tenantId     String   @map("tenant_id") @db.Uuid
+  categoryId   String?  @map("category_id") @db.Uuid
+  sku          String
+  barcode      String?
+  name         String
+  unit         String   @default("pcs")
+  price        Int
+  mrp          Int?
+  costPrice    Int      @default(0) @map("cost_price")
+  taxRate      Int      @default(0) @map("tax_rate")
+  hsn          String?
+  reorderLevel Float    @default(0) @map("reorder_level")
+  isActive     Boolean  @default(true) @map("is_active")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  tenant        Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  category      BillCategory?       @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  stockLevels   BillStockLevel[]
+  movements     BillStockMovement[]
+  saleItems     BillSaleItem[]
+  purchaseItems BillPurchaseItem[]
+
+  @@unique([tenantId, sku])
+  @@unique([tenantId, barcode])
+  @@map("bill_products")
+}
+
+model BillStockLevel {
+  id        String @id @default(uuid()) @db.Uuid
+  tenantId  String @map("tenant_id") @db.Uuid
+  productId String @map("product_id") @db.Uuid
+  branchId  String @map("branch_id") @db.Uuid
+  quantity  Float  @default(0)
+
+  tenant  Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  product BillProduct @relation(fields: [productId], references: [id], onDelete: Cascade)
+  branch  Branch      @relation(fields: [branchId], references: [id], onDelete: Cascade)
+
+  @@unique([productId, branchId])
+  @@map("bill_stock_levels")
+}
+
+model BillStockMovement {
+  id           String           @id @default(uuid()) @db.Uuid
+  tenantId     String           @map("tenant_id") @db.Uuid
+  productId    String           @map("product_id") @db.Uuid
+  branchId     String           @map("branch_id") @db.Uuid
+  type         BillMovementType
+  quantity     Float
+  balanceAfter Float            @map("balance_after")
+  reason       String?
+  reference    String?
+  userId       String?          @map("user_id") @db.Uuid
+  createdAt    DateTime         @default(now()) @map("created_at")
+
+  tenant  Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  product BillProduct @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, createdAt])
+  @@map("bill_stock_movements")
+}
+
+model BillCustomer {
+  id        String   @id @default(uuid()) @db.Uuid
+  tenantId  String   @map("tenant_id") @db.Uuid
+  name      String
+  phone     String
+  email     String?
+  address   String?
+  gstin     String?
+  notes     String?
+  createdAt DateTime @default(now()) @map("created_at")
+
+  tenant Tenant     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  sales  BillSale[]
+
+  @@unique([tenantId, phone])
+  @@map("bill_customers")
+}
+
+model BillCounter {
+  id       String  @id @default(uuid()) @db.Uuid
+  tenantId String  @map("tenant_id") @db.Uuid
+  branchId String  @map("branch_id") @db.Uuid
+  name     String
+  isActive Boolean @default(true) @map("is_active")
+
+  tenant Tenant     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  branch Branch     @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  sales  BillSale[]
+
+  @@unique([tenantId, branchId, name])
+  @@map("bill_counters")
+}
+
+model BillSale {
+  id            String     @id @default(uuid()) @db.Uuid
+  tenantId      String     @map("tenant_id") @db.Uuid
+  branchId      String     @map("branch_id") @db.Uuid
+  counterId     String?    @map("counter_id") @db.Uuid
+  saleNo        Int        @map("sale_no")
+  invoiceNo     String     @map("invoice_no")
+  customerId    String?    @map("customer_id") @db.Uuid
+  cashierId     String?    @map("cashier_id") @db.Uuid
+  subtotal      Int
+  discount      Int        @default(0)
+  taxTotal      Int        @map("tax_total")
+  total         Int
+  paymentMethod TenderType @map("payment_method")
+  amountPaid    Int        @map("amount_paid")
+  changeDue     Int        @default(0) @map("change_due")
+  status        SaleStatus @default(COMPLETED)
+  voidReason    String?    @map("void_reason")
+  publicToken   String     @unique @map("public_token")
+  createdAt     DateTime   @default(now()) @map("created_at")
+
+  tenant   Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  branch   Branch         @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  counter  BillCounter?   @relation(fields: [counterId], references: [id], onDelete: SetNull)
+  customer BillCustomer?  @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  cashier  User?          @relation("SaleCashier", fields: [cashierId], references: [id], onDelete: SetNull)
+  items    BillSaleItem[]
+
+  @@unique([tenantId, saleNo])
+  @@index([tenantId, createdAt])
+  @@map("bill_sales")
+}
+
+model BillSaleItem {
+  id        String  @id @default(uuid()) @db.Uuid
+  tenantId  String  @map("tenant_id") @db.Uuid
+  saleId    String  @map("sale_id") @db.Uuid
+  productId String  @map("product_id") @db.Uuid
+  name      String
+  barcode   String?
+  qty       Float
+  unitPrice Int     @map("unit_price")
+  costPrice Int     @default(0) @map("cost_price")
+  taxRate   Int     @map("tax_rate")
+  discount  Int     @default(0)
+  lineTotal Int     @map("line_total")
+
+  tenant  Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  sale    BillSale    @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  product BillProduct @relation(fields: [productId], references: [id])
+
+  @@index([saleId])
+  @@map("bill_sale_items")
+}
+
+model BillSupplier {
+  id            String   @id @default(uuid()) @db.Uuid
+  tenantId      String   @map("tenant_id") @db.Uuid
+  name          String
+  contactPerson String?  @map("contact_person")
+  phone         String?
+  email         String?
+  address       String?
+  gstin         String?
+  isActive      Boolean  @default(true) @map("is_active")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  tenant    Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  purchases BillPurchase[]
+
+  @@map("bill_suppliers")
+}
+
+model BillPurchase {
+  id           String         @id @default(uuid()) @db.Uuid
+  tenantId     String         @map("tenant_id") @db.Uuid
+  branchId     String         @map("branch_id") @db.Uuid
+  purchaseNo   Int            @map("purchase_no")
+  supplierId   String?        @map("supplier_id") @db.Uuid
+  supplierName String?        @map("supplier_name")
+  status       PurchaseStatus @default(RECEIVED)
+  invoiceRef   String?        @map("invoice_ref")
+  total        Int            @default(0)
+  notes        String?
+  orderedAt    DateTime       @default(now()) @map("ordered_at")
+  receivedAt   DateTime?      @map("received_at")
+  createdById  String?        @map("created_by_id") @db.Uuid
+
+  tenant   Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  supplier BillSupplier?      @relation(fields: [supplierId], references: [id], onDelete: SetNull)
+  items    BillPurchaseItem[]
+
+  @@unique([tenantId, purchaseNo])
+  @@map("bill_purchases")
+}
+
+model BillPurchaseItem {
+  id         String @id @default(uuid()) @db.Uuid
+  tenantId   String @map("tenant_id") @db.Uuid
+  purchaseId String @map("purchase_id") @db.Uuid
+  productId  String @map("product_id") @db.Uuid
+  quantity   Float
+  unitCost   Int    @map("unit_cost")
+
+  tenant   Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  purchase BillPurchase @relation(fields: [purchaseId], references: [id], onDelete: Cascade)
+  product  BillProduct  @relation(fields: [productId], references: [id])
+
+  @@map("bill_purchase_items")
+}

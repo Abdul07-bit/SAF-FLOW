@@ -1,0 +1,14 @@
+/**
+ * Registers every API module once and exposes the dispatcher used by the
+ * Next.js catch-all route (src/app/api/[...path]/route.ts) and by the tests.
+ */
+import "./routes/auth";
+import "./routes/admin";
+import "./routes/tenant";
+import "./routes/staff";
+import "./routes/dine";
+import "./routes/stay";
+import "./routes/bill";
+import "./routes/system";
+
+export { handleRequest, listRoutes } from "./http/router";

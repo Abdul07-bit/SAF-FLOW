@@ -1,0 +1,122 @@
+# SMARTAUTO FLEX - local development and single-host production stack.
+#
+#   Development (database + object storage only, run Next.js on the host):
+#     docker compose up -d postgres minio minio-init
+#
+#   Full stack (app + nginx), see docs/DEPLOYMENT.md:
+#     docker compose --profile app up -d --build
+#
+# Change every *_PASSWORD value before using this outside a developer machine.
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: saf_owner
+      POSTGRES_PASSWORD: ${SAF_OWNER_PASSWORD:-saf_owner_dev_password}
+      POSTGRES_DB: saf
+      SAF_APP_PASSWORD: ${SAF_APP_PASSWORD:-saf_app_dev_password}
+    ports:
+      - "5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./deploy/postgres-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U saf_owner -d saf"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  minio:
+    image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: saf_minio
+      MINIO_ROOT_PASSWORD: ${SAF_MINIO_PASSWORD:-saf_minio_dev_password}
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - miniodata:/data
+
+  minio-init:
+    image: minio/mc:RELEASE.2025-04-16T18-13-26Z
+    depends_on: [minio]
+    entrypoint: >
+      /bin/sh -c "
+      until mc alias set saf http://minio:9000 saf_minio $${SAF_MINIO_PASSWORD:-saf_minio_dev_password}; do sleep 2; done;
+      mc mb --ignore-existing saf/saf-files;
+      exit 0;"
+    environment:
+      SAF_MINIO_PASSWORD: ${SAF_MINIO_PASSWORD:-saf_minio_dev_password}
+
+  migrate:
+    profiles: ["app"]
+    build:
+      context: .
+      target: builder
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://saf_app:${SAF_APP_PASSWORD:-saf_app_dev_password}@postgres:5432/saf?schema=public
+      DIRECT_URL: postgresql://saf_owner:${SAF_OWNER_PASSWORD:-saf_owner_dev_password}@postgres:5432/saf?schema=public
+      SAF_ADMIN_USERNAME: ${SAF_ADMIN_USERNAME:-saf@admin}
+      SAF_ADMIN_PASSWORD: ${SAF_ADMIN_PASSWORD:-}
+    command: sh -c "npx prisma migrate deploy && npx tsx prisma/seed.ts"
+
+  app:
+    profiles: ["app"]
+    build:
+      context: .
+      target: runner
+    restart: unless-stopped
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      DATABASE_URL: postgresql://saf_app:${SAF_APP_PASSWORD:-saf_app_dev_password}@postgres:5432/saf?schema=public
+      DIRECT_URL: postgresql://saf_owner:${SAF_OWNER_PASSWORD:-saf_owner_dev_password}@postgres:5432/saf?schema=public
+      APP_URL: ${APP_URL:-http://localhost}
+      STORAGE_DRIVER: s3
+      S3_ENDPOINT: http://minio:9000
+      S3_REGION: us-east-1
+      S3_BUCKET: saf-files
+      S3_ACCESS_KEY_ID: saf_minio
+      S3_SECRET_ACCESS_KEY: ${SAF_MINIO_PASSWORD:-saf_minio_dev_password}
+      S3_FORCE_PATH_STYLE: "true"
+      CRON_SECRET: ${CRON_SECRET:-change-me}
+      RAZORPAY_KEY_ID: ${RAZORPAY_KEY_ID:-}
+      RAZORPAY_KEY_SECRET: ${RAZORPAY_KEY_SECRET:-}
+      RAZORPAY_WEBHOOK_SECRET: ${RAZORPAY_WEBHOOK_SECRET:-}
+      TRUST_PROXY: "1"
+
+  nginx:
+    profiles: ["app"]
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    depends_on: [app]
+    ports:
+      - "80:80"
+    volumes:
+      - ./deploy/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+
+  # Daily renewal job: expires lapsed subscriptions, applies scheduled plan
+  # changes, raises renewal invoices and reminders.
+  cron:
+    profiles: ["app"]
+    image: curlimages/curl:8.10.1
+    restart: unless-stopped
+    depends_on: [app]
+    environment:
+      CRON_SECRET: ${CRON_SECRET:-change-me}
+    entrypoint: >
+      /bin/sh -c "while true; do
+      curl -fsS -X POST -H \"x-cron-secret: $${CRON_SECRET}\" http://app:3000/api/jobs/renewals || true;
+      sleep 21600; done"
+
+volumes:
+  pgdata:
+  miniodata:
