@@ -44,6 +44,46 @@ Notes:
 - Avoid the characters `@ : / ? #` in the database passwords, because they are
   placed inside a connection URL.
 
+## 2a. Supabase (email sign-in and database)
+
+SAF Flow uses Supabase Auth for email accounts (invitations, password reset,
+email verification). It can also use Supabase as the managed PostgreSQL
+database. See [SAF-FLOW-ARCHITECTURE.md](SAF-FLOW-ARCHITECTURE.md) for the
+design.
+
+### Auth configuration
+
+Do these once per Supabase project, in the Supabase dashboard:
+
+1. **Keys.** Set the following in `.env`:
+   - `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`, from Project Settings > API Keys.
+   - `SUPABASE_SECRET_KEY`, the **secret** key. Server only: never commit it and never use it in browser code.
+2. **Turn off public sign-ups.** Authentication > Sign In / Providers: disable "Allow new users to sign up". SAF Flow is invite-only.
+3. **Redirect URLs.** Authentication > URL Configuration:
+   - Set **Site URL** to `APP_URL`.
+   - Add `<APP_URL>/auth/callback` to the Redirect URLs allow-list, for example `https://app.saflow.com/auth/callback`. For local development add `http://localhost:3000/auth/callback`.
+4. **Custom SMTP.** Authentication > Emails > SMTP Settings. This is required before inviting real clients: Supabase's built-in sender only delivers to your own project team and is heavily rate limited. Any SMTP provider works (for example Resend, Brevo or Zoho).
+5. **Email templates (optional).** Rename the "Invite user" and "Reset password" templates to SAF Flow.
+
+Until step 4 is done, invite people with **delivery: link**. SAF Flow then
+returns the invitation link, and you send it yourself, for example on WhatsApp.
+
+### Using Supabase Postgres as the database
+
+1. Connect with the Supabase SQL editor (as `postgres`) and create the runtime role. It must not have BYPASSRLS:
+   ```sql
+   CREATE ROLE saf_app LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE PASSWORD '<strong password>';
+   GRANT USAGE ON SCHEMA public TO saf_app;
+   ```
+2. Set the two connection strings (Project Settings > Database > Connect, "Session pooler" or direct):
+   - `DIRECT_URL`: the `postgres` user. Used only by `prisma migrate deploy`.
+   - `DATABASE_URL`: the `saf_app` user. Used by the running app, so RLS applies.
+3. Run `npx prisma migrate deploy`, then `npx tsx prisma/seed.ts`.
+   - The `saf_flow_foundation` migration revokes all Data API (`anon` / `authenticated`) access to SAF tables.
+   - Check it afterwards: `select count(*) from information_schema.role_table_grants where grantee in ('anon','authenticated') and table_schema='public';` must return 0.
+
+Use **separate Supabase projects** for staging and production.
+
 ## 3. Start
 
 ```bash

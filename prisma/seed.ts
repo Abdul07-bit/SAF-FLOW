@@ -18,6 +18,7 @@ import { prisma, withPlatform, type Tx } from "../src/server/db";
 import { hashPassword } from "../src/server/auth/password";
 import { normalizeUsername, temporaryPassword } from "../src/server/core/ids";
 import { PLATFORM_DEFAULTS } from "../src/server/core/settings";
+import { PLATFORM_PERMISSIONS, PLATFORM_ROLES } from "../src/config/platform";
 
 export async function seedCatalog(db: Tx, log = console.log) {
   for (const [i, p] of PRODUCT_LIST.entries()) {
@@ -100,6 +101,31 @@ export async function seedCatalog(db: Tx, log = console.log) {
   });
 }
 
+/**
+ * Platform RBAC sync from src/config/platform.ts. Permissions are always
+ * upserted. A role gets its default grants only while no administrator has
+ * edited it (customized = false); SUPER_ADMIN always holds every permission.
+ */
+export async function seedPlatformRbac(db: Tx, log = console.log) {
+  for (const perm of PLATFORM_PERMISSIONS) {
+    await db.platformPermission.upsert({
+      where: { key: perm.key }, create: perm, update: { area: perm.area, description: perm.description },
+    });
+  }
+  for (const [i, r] of PLATFORM_ROLES.entries()) {
+    const existing = await db.platformRole.findUnique({ where: { code: r.code } });
+    if (existing?.customized && r.code !== "SUPER_ADMIN") continue;
+    await db.platformRole.upsert({
+      where: { code: r.code },
+      create: { code: r.code, name: r.name, description: r.description, allTenants: r.allTenants, isSystem: r.isSystem, sortOrder: i + 1 },
+      update: { name: r.name, description: r.description, allTenants: r.allTenants, isSystem: r.isSystem, sortOrder: i + 1 },
+    });
+    await db.platformRolePermission.deleteMany({ where: { roleCode: r.code } });
+    await db.platformRolePermission.createMany({ data: r.permissions.map((permissionKey) => ({ roleCode: r.code, permissionKey })) });
+  }
+  log(`  platform RBAC: ${PLATFORM_PERMISSIONS.length} permissions, ${PLATFORM_ROLES.length} roles`);
+}
+
 export async function seedSuperAdmin(db: Tx, log = console.log) {
   const exists = await db.user.findFirst({ where: { kind: "PLATFORM" } });
   if (exists) return null;
@@ -119,9 +145,10 @@ export async function seedSuperAdmin(db: Tx, log = console.log) {
 
 async function main() {
   const demo = process.argv.includes("--demo");
-  console.log("Seeding SMARTAUTO FLEX catalog...");
+  console.log("Seeding SAF Flow catalog...");
   await withPlatform(async (db) => {
     await seedCatalog(db);
+    await seedPlatformRbac(db);
     await seedSuperAdmin(db);
   });
   if (demo) {

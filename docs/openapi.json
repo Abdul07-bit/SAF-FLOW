@@ -3255,6 +3255,15 @@
                         "roleCode"
                       ]
                     }
+                  },
+                  "branchIds": {
+                    "maxItems": 50,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    }
                   }
                 },
                 "required": [
@@ -3383,6 +3392,15 @@
                         "product",
                         "roleCode"
                       ]
+                    }
+                  },
+                  "branchIds": {
+                    "maxItems": 50,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
                     }
                   }
                 }
@@ -3556,7 +3574,7 @@
           }
         },
         "x-saf-auth": {
-          "platform": true
+          "platform": "platform.revenue.read"
         }
       }
     },
@@ -3656,7 +3674,7 @@
           }
         },
         "x-saf-auth": {
-          "platform": true
+          "platform": "platform.audit.read"
         }
       }
     },
@@ -3747,7 +3765,7 @@
           }
         },
         "x-saf-auth": {
-          "platform": true
+          "platform": "platform.business.read"
         }
       },
       "post": {
@@ -3778,7 +3796,8 @@
           }
         },
         "x-saf-auth": {
-          "platform": true
+          "platform": "platform.business.create",
+          "elevated": true
         },
         "requestBody": {
           "required": true,
@@ -3993,7 +4012,8 @@
           }
         },
         "x-saf-auth": {
-          "platform": true
+          "platform": "platform.business.read",
+          "target": "business"
         }
       },
       "patch": {
@@ -4033,7 +4053,8 @@
           }
         },
         "x-saf-auth": {
-          "platform": true
+          "platform": "platform.business.update",
+          "target": "business"
         },
         "requestBody": {
           "required": true,
@@ -4155,7 +4176,8 @@
           }
         },
         "x-saf-auth": {
-          "platform": true
+          "platform": "platform.business.read",
+          "target": "business"
         }
       }
     },
@@ -4205,7 +4227,8 @@
           }
         },
         "x-saf-auth": {
-          "platform": true
+          "platform": "platform.entitlements.manage",
+          "target": "business"
         },
         "requestBody": {
           "required": true,
@@ -4275,7 +4298,8 @@
           }
         },
         "x-saf-auth": {
-          "platform": true
+          "platform": "platform.business.update",
+          "target": "business"
         },
         "requestBody": {
           "required": true,
@@ -4333,7 +4357,8 @@
           }
         },
         "x-saf-auth": {
-          "platform": true
+          "platform": "platform.entitlements.manage",
+          "target": "business"
         },
         "requestBody": {
           "required": true,
@@ -4460,7 +4485,8 @@
           }
         },
         "x-saf-auth": {
-          "platform": true
+          "platform": "platform.business.suspend",
+          "target": "business"
         },
         "requestBody": {
           "required": true,
@@ -4530,7 +4556,7 @@
           }
         },
         "x-saf-auth": {
-          "platform": true
+          "platform": "platform.business.create"
         }
       }
     },
@@ -4563,7 +4589,7 @@
           }
         },
         "x-saf-auth": {
-          "platform": true
+          "platform": "platform.dashboard.read"
         }
       }
     },
@@ -4651,7 +4677,7 @@
           }
         },
         "x-saf-auth": {
-          "platform": true
+          "platform": "platform.users.read"
         }
       }
     },
@@ -4684,7 +4710,7 @@
           }
         },
         "x-saf-auth": {
-          "platform": true
+          "platform": "platform.catalog.read"
         }
       }
     },
@@ -4772,7 +4798,7 @@
           }
         },
         "x-saf-auth": {
-          "platform": true
+          "platform": "platform.billing.read"
         }
       },
       "post": {
@@ -4803,7 +4829,8 @@
           }
         },
         "x-saf-auth": {
-          "platform": true
+          "platform": "platform.billing.manage",
+          "target": "bodyTenant"
         },
         "requestBody": {
           "required": true,
@@ -4886,7 +4913,8 @@
           }
         },
         "x-saf-auth": {
-          "platform": true
+          "platform": "platform.billing.read",
+          "target": "invoice"
         }
       }
     },
@@ -4928,7 +4956,8 @@
           }
         },
         "x-saf-auth": {
-          "platform": true
+          "platform": "platform.billing.manage",
+          "target": "invoice"
         },
         "requestBody": {
           "required": true,
@@ -4978,7 +5007,7 @@
           }
         },
         "x-saf-auth": {
-          "platform": true
+          "platform": "platform.jobs.run"
         }
       }
     },
@@ -5043,7 +5072,40 @@
           }
         },
         "x-saf-auth": {
-          "platform": true
+          "platform": "platform.users.read"
+        }
+      }
+    },
+    "/api/admin/me": {
+      "get": {
+        "summary": "Your platform role, permissions and assigned businesses",
+        "description": "**Authorization:** SAF Super Admin only.",
+        "tags": [
+          "saf-team"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "402": {
+            "description": "Subscription expired"
+          },
+          "403": {
+            "description": "Not permitted (plan feature, role permission, tenant suspended...)"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        },
+        "x-saf-auth": {
+          "platform": "platform.dashboard.read"
         }
       }
     },
@@ -5076,7 +5138,7 @@
           }
         },
         "x-saf-auth": {
-          "platform": true
+          "platform": "platform.dashboard.read"
         }
       }
     },
@@ -5184,7 +5246,7 @@
           }
         },
         "x-saf-auth": {
-          "platform": true
+          "platform": "platform.billing.read"
         }
       },
       "post": {
@@ -5215,7 +5277,8 @@
           }
         },
         "x-saf-auth": {
-          "platform": true
+          "platform": "platform.billing.manage",
+          "target": "bodyInvoice"
         },
         "requestBody": {
           "required": true,
@@ -5298,7 +5361,7 @@
           }
         },
         "x-saf-auth": {
-          "platform": true
+          "platform": "platform.catalog.read"
         }
       }
     },
@@ -5340,7 +5403,7 @@
           }
         },
         "x-saf-auth": {
-          "platform": true
+          "platform": "platform.catalog.manage"
         },
         "requestBody": {
           "required": true,
@@ -5435,7 +5498,7 @@
           }
         },
         "x-saf-auth": {
-          "platform": true
+          "platform": "platform.catalog.manage"
         },
         "requestBody": {
           "required": true,
@@ -5451,6 +5514,241 @@
                 },
                 "required": [
                   "enabled"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/platform-roles": {
+      "get": {
+        "summary": "Platform roles with their permissions, and the permission catalog",
+        "description": "**Authorization:** SAF Super Admin only.",
+        "tags": [
+          "saf-team"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "402": {
+            "description": "Subscription expired"
+          },
+          "403": {
+            "description": "Not permitted (plan feature, role permission, tenant suspended...)"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        },
+        "x-saf-auth": {
+          "platform": "platform.staff.read",
+          "elevated": true
+        }
+      },
+      "post": {
+        "summary": "Create a custom platform role",
+        "description": "**Authorization:** SAF Super Admin only.\n\nMutations require header `x-saf-request: 1` (CSRF guard).",
+        "tags": [
+          "saf-team"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "402": {
+            "description": "Subscription expired"
+          },
+          "403": {
+            "description": "Not permitted (plan feature, role permission, tenant suspended...)"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        },
+        "x-saf-auth": {
+          "platform": "platform.staff.permissions.manage",
+          "elevated": true
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 2,
+                    "maxLength": 60
+                  },
+                  "description": {
+                    "default": "",
+                    "type": "string",
+                    "maxLength": 300
+                  },
+                  "allTenants": {
+                    "default": false,
+                    "type": "boolean"
+                  },
+                  "permissions": {
+                    "maxItems": 100,
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "code": {
+                    "type": "string",
+                    "pattern": "^[A-Z][A-Z0-9_]{2,39}$"
+                  }
+                },
+                "required": [
+                  "name",
+                  "permissions",
+                  "code"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/platform-roles/{code}": {
+      "delete": {
+        "summary": "Delete an unused custom platform role",
+        "description": "**Authorization:** SAF Super Admin only.\n\nMutations require header `x-saf-request: 1` (CSRF guard).",
+        "tags": [
+          "saf-team"
+        ],
+        "parameters": [
+          {
+            "name": "code",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "402": {
+            "description": "Subscription expired"
+          },
+          "403": {
+            "description": "Not permitted (plan feature, role permission, tenant suspended...)"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        },
+        "x-saf-auth": {
+          "platform": "platform.staff.permissions.manage",
+          "elevated": true
+        }
+      },
+      "put": {
+        "summary": "Edit a platform role's permissions and scope",
+        "description": "**Authorization:** SAF Super Admin only.\n\nMutations require header `x-saf-request: 1` (CSRF guard).",
+        "tags": [
+          "saf-team"
+        ],
+        "parameters": [
+          {
+            "name": "code",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "402": {
+            "description": "Subscription expired"
+          },
+          "403": {
+            "description": "Not permitted (plan feature, role permission, tenant suspended...)"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        },
+        "x-saf-auth": {
+          "platform": "platform.staff.permissions.manage",
+          "elevated": true
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 2,
+                    "maxLength": 60
+                  },
+                  "description": {
+                    "default": "",
+                    "type": "string",
+                    "maxLength": 300
+                  },
+                  "allTenants": {
+                    "default": false,
+                    "type": "boolean"
+                  },
+                  "permissions": {
+                    "maxItems": 100,
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "reason": {
+                    "type": "string",
+                    "maxLength": 300
+                  }
+                },
+                "required": [
+                  "name",
+                  "permissions"
                 ]
               }
             }
@@ -5487,7 +5785,7 @@
           }
         },
         "x-saf-auth": {
-          "platform": true
+          "platform": "platform.catalog.read"
         }
       }
     },
@@ -5529,7 +5827,7 @@
           }
         },
         "x-saf-auth": {
-          "platform": true
+          "platform": "platform.catalog.manage"
         },
         "requestBody": {
           "required": true,
@@ -5591,7 +5889,7 @@
           }
         },
         "x-saf-auth": {
-          "platform": true
+          "platform": "platform.settings.read"
         }
       },
       "put": {
@@ -5622,7 +5920,7 @@
           }
         },
         "x-saf-auth": {
-          "platform": true
+          "platform": "platform.settings.manage"
         },
         "requestBody": {
           "required": true,
@@ -5772,7 +6070,7 @@
           }
         },
         "x-saf-auth": {
-          "platform": true
+          "platform": "platform.subscription.read"
         }
       }
     },
@@ -5814,7 +6112,8 @@
           }
         },
         "x-saf-auth": {
-          "platform": true
+          "platform": "platform.subscription.manage",
+          "target": "subscription"
         },
         "requestBody": {
           "required": true,
@@ -5887,7 +6186,8 @@
           }
         },
         "x-saf-auth": {
-          "platform": true
+          "platform": "platform.subscription.manage",
+          "target": "subscription"
         },
         "requestBody": {
           "required": true,
@@ -5970,7 +6270,8 @@
           }
         },
         "x-saf-auth": {
-          "platform": true
+          "platform": "platform.subscription.read",
+          "target": "subscription"
         }
       }
     },
@@ -6012,7 +6313,8 @@
           }
         },
         "x-saf-auth": {
-          "platform": true
+          "platform": "platform.subscription.manage",
+          "target": "subscription"
         },
         "requestBody": {
           "required": true,
@@ -6098,7 +6400,8 @@
           }
         },
         "x-saf-auth": {
-          "platform": true
+          "platform": "platform.subscription.manage",
+          "target": "subscription"
         },
         "requestBody": {
           "required": true,
@@ -6174,7 +6477,7 @@
           }
         },
         "x-saf-auth": {
-          "platform": true
+          "platform": "platform.support.read"
         }
       }
     },
@@ -6216,7 +6519,8 @@
           }
         },
         "x-saf-auth": {
-          "platform": true
+          "platform": "platform.support.read",
+          "target": "ticket"
         }
       },
       "patch": {
@@ -6256,7 +6560,8 @@
           }
         },
         "x-saf-auth": {
-          "platform": true
+          "platform": "platform.support.manage",
+          "target": "ticket"
         },
         "requestBody": {
           "required": true,
@@ -6329,7 +6634,8 @@
           }
         },
         "x-saf-auth": {
-          "platform": true
+          "platform": "platform.support.manage",
+          "target": "ticket"
         },
         "requestBody": {
           "required": true,
@@ -6348,6 +6654,486 @@
                 "required": [
                   "body"
                 ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/team": {
+      "get": {
+        "summary": "SAF Team members",
+        "description": "**Authorization:** SAF Super Admin only.",
+        "tags": [
+          "saf-team"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "402": {
+            "description": "Subscription expired"
+          },
+          "403": {
+            "description": "Not permitted (plan feature, role permission, tenant suspended...)"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        },
+        "x-saf-auth": {
+          "platform": "platform.staff.read",
+          "elevated": true
+        }
+      },
+      "post": {
+        "summary": "Invite a SAF Team member (email invitation, no password is ever set by an admin)",
+        "description": "**Authorization:** SAF Super Admin only.\n\nMutations require header `x-saf-request: 1` (CSRF guard).",
+        "tags": [
+          "saf-team"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "402": {
+            "description": "Subscription expired"
+          },
+          "403": {
+            "description": "Not permitted (plan feature, role permission, tenant suspended...)"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        },
+        "x-saf-auth": {
+          "platform": "platform.staff.create",
+          "elevated": true
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "fullName": {
+                    "type": "string",
+                    "minLength": 2,
+                    "maxLength": 100
+                  },
+                  "phone": {
+                    "type": "string",
+                    "maxLength": 20
+                  },
+                  "employeeCode": {
+                    "type": "string",
+                    "pattern": "^[A-Z0-9][A-Z0-9-]{1,19}$"
+                  },
+                  "department": {
+                    "type": "string",
+                    "maxLength": 60
+                  },
+                  "designation": {
+                    "type": "string",
+                    "maxLength": 60
+                  },
+                  "email": {
+                    "type": "string",
+                    "maxLength": 200,
+                    "format": "email",
+                    "pattern": "^(?:[A-Za-z0-9_'+\\-]+\\.)*[A-Za-z0-9_'+\\-]*[A-Za-z0-9_+-]@(?:[A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
+                  },
+                  "roleCode": {
+                    "type": "string"
+                  },
+                  "delivery": {
+                    "default": "email",
+                    "type": "string",
+                    "enum": [
+                      "email",
+                      "link"
+                    ]
+                  }
+                },
+                "required": [
+                  "fullName",
+                  "employeeCode",
+                  "email",
+                  "roleCode"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/team/{id}": {
+      "get": {
+        "summary": "Team member with assignments and recent activity",
+        "description": "**Authorization:** SAF Super Admin only.",
+        "tags": [
+          "saf-team"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "402": {
+            "description": "Subscription expired"
+          },
+          "403": {
+            "description": "Not permitted (plan feature, role permission, tenant suspended...)"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        },
+        "x-saf-auth": {
+          "platform": "platform.staff.read",
+          "elevated": true
+        }
+      },
+      "patch": {
+        "summary": "Edit, re-role, suspend or reactivate a team member",
+        "description": "**Authorization:** SAF Super Admin only.\n\nMutations require header `x-saf-request: 1` (CSRF guard).",
+        "tags": [
+          "saf-team"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "402": {
+            "description": "Subscription expired"
+          },
+          "403": {
+            "description": "Not permitted (plan feature, role permission, tenant suspended...)"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        },
+        "x-saf-auth": {
+          "platform": "platform.staff.update",
+          "elevated": true
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "fullName": {
+                    "type": "string",
+                    "minLength": 2,
+                    "maxLength": 100
+                  },
+                  "phone": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 20
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "department": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 60
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "designation": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 60
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "roleCode": {
+                    "type": "string"
+                  },
+                  "isActive": {
+                    "type": "boolean"
+                  },
+                  "reason": {
+                    "type": "string",
+                    "maxLength": 300
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/team/{id}/assignments/{tenantId}": {
+      "delete": {
+        "summary": "Revoke a member's access to a business (effective immediately)",
+        "description": "**Authorization:** SAF Super Admin only.\n\nMutations require header `x-saf-request: 1` (CSRF guard).",
+        "tags": [
+          "saf-team"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "tenantId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "402": {
+            "description": "Subscription expired"
+          },
+          "403": {
+            "description": "Not permitted (plan feature, role permission, tenant suspended...)"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        },
+        "x-saf-auth": {
+          "platform": "platform.staff.assign",
+          "elevated": true
+        }
+      },
+      "put": {
+        "summary": "Assign a member to a business, optionally limited to branches, modules and permissions",
+        "description": "**Authorization:** SAF Super Admin only.\n\nMutations require header `x-saf-request: 1` (CSRF guard).",
+        "tags": [
+          "saf-team"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "tenantId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "402": {
+            "description": "Subscription expired"
+          },
+          "403": {
+            "description": "Not permitted (plan feature, role permission, tenant suspended...)"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        },
+        "x-saf-auth": {
+          "platform": "platform.staff.assign",
+          "elevated": true
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "branchIds": {
+                    "default": [],
+                    "maxItems": 100,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    }
+                  },
+                  "products": {
+                    "default": [],
+                    "maxItems": 10,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "dine",
+                        "stay",
+                        "bill"
+                      ]
+                    }
+                  },
+                  "permissions": {
+                    "default": [],
+                    "maxItems": 100,
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "note": {
+                    "type": "string",
+                    "maxLength": 300
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/team/{id}/resend-invite": {
+      "post": {
+        "summary": "Send a fresh invitation to a member who has not accepted yet",
+        "description": "**Authorization:** SAF Super Admin only.\n\nMutations require header `x-saf-request: 1` (CSRF guard).",
+        "tags": [
+          "saf-team"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "402": {
+            "description": "Subscription expired"
+          },
+          "403": {
+            "description": "Not permitted (plan feature, role permission, tenant suspended...)"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        },
+        "x-saf-auth": {
+          "platform": "platform.staff.create",
+          "elevated": true
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "delivery": {
+                    "default": "email",
+                    "type": "string",
+                    "enum": [
+                      "email",
+                      "link"
+                    ]
+                  }
+                }
               }
             }
           }
@@ -6392,7 +7178,8 @@
           }
         },
         "x-saf-auth": {
-          "platform": true
+          "platform": "platform.users.manage",
+          "target": "user"
         }
       }
     },
@@ -6434,7 +7221,8 @@
           }
         },
         "x-saf-auth": {
-          "platform": true
+          "platform": "platform.users.manage",
+          "target": "user"
         },
         "requestBody": {
           "required": true,
@@ -6495,7 +7283,8 @@
           }
         },
         "x-saf-auth": {
-          "platform": true
+          "platform": "platform.users.manage",
+          "target": "user"
         }
       }
     },
@@ -6560,9 +7349,125 @@
         }
       }
     },
+    "/api/auth/link/complete": {
+      "post": {
+        "summary": "Set a password from an invitation / reset link and sign in",
+        "description": "**Authorization:** Public (no session).",
+        "tags": [
+          "auth"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "402": {
+            "description": "Subscription expired"
+          },
+          "403": {
+            "description": "Not permitted (plan feature, role permission, tenant suspended...)"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        },
+        "security": [],
+        "x-saf-auth": {
+          "public": true
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "accessToken": {
+                    "type": "string",
+                    "minLength": 20,
+                    "maxLength": 4000
+                  },
+                  "password": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  }
+                },
+                "required": [
+                  "accessToken",
+                  "password"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/link/inspect": {
+      "post": {
+        "summary": "Describe an invitation / reset link before the user sets a password",
+        "description": "**Authorization:** Public (no session).",
+        "tags": [
+          "auth"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "402": {
+            "description": "Subscription expired"
+          },
+          "403": {
+            "description": "Not permitted (plan feature, role permission, tenant suspended...)"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        },
+        "security": [],
+        "x-saf-auth": {
+          "public": true
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "accessToken": {
+                    "type": "string",
+                    "minLength": 20,
+                    "maxLength": 4000
+                  }
+                },
+                "required": [
+                  "accessToken"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/auth/login": {
       "post": {
-        "summary": "Sign in with login ID and password",
+        "summary": "Sign in with email or login ID and password",
         "description": "**Authorization:** Public (no session).",
         "tags": [
           "auth"
@@ -6603,7 +7508,7 @@
                   "username": {
                     "type": "string",
                     "minLength": 3,
-                    "maxLength": 80
+                    "maxLength": 200
                   },
                   "password": {
                     "type": "string",
@@ -6652,6 +7557,94 @@
         "x-saf-auth": {
           "session": true,
           "allowPasswordChange": true
+        }
+      }
+    },
+    "/api/auth/logout-all": {
+      "post": {
+        "summary": "Sign out of every device (revokes all sessions)",
+        "description": "**Authorization:** Any signed-in user.\n\nMutations require header `x-saf-request: 1` (CSRF guard).",
+        "tags": [
+          "auth"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "402": {
+            "description": "Subscription expired"
+          },
+          "403": {
+            "description": "Not permitted (plan feature, role permission, tenant suspended...)"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        },
+        "x-saf-auth": {
+          "session": true,
+          "allowPasswordChange": true
+        }
+      }
+    },
+    "/api/auth/password-reset": {
+      "post": {
+        "summary": "Email a password-reset link (email accounts). Always answers the same way.",
+        "description": "**Authorization:** Public (no session).",
+        "tags": [
+          "auth"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "402": {
+            "description": "Subscription expired"
+          },
+          "403": {
+            "description": "Not permitted (plan feature, role permission, tenant suspended...)"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        },
+        "security": [],
+        "x-saf-auth": {
+          "public": true
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "email": {
+                    "type": "string",
+                    "maxLength": 200
+                  }
+                },
+                "required": [
+                  "email"
+                ]
+              }
+            }
+          }
         }
       }
     },

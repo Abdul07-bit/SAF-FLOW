@@ -6,6 +6,7 @@ import { badRequest, conflict, forbidden, HttpError, notFound } from "../http/er
 import { nextSeq, withPlatform, withTenant, type Tx } from "../db";
 import { hashPassword } from "../auth/password";
 import { revokeUserSessions } from "../auth/session";
+import { emailPasswordReset } from "../auth/identity";
 import { isValidHandle, temporaryPassword } from "../core/ids";
 import { isUsable, summarize } from "../core/access";
 import { getPlatformSettings, productSettingsSchemas, saveProductSettings } from "../core/settings";
@@ -62,6 +63,26 @@ async function applyAccess(db: Tx, ctx: Ctx, userId: string, access: z.infer<typ
   }
 }
 
+/**
+ * Restricts a staff member to specific branches ([] = every branch).
+ * A branch-restricted manager can only grant branches they have themselves
+ * and can never lift a restriction.
+ */
+async function applyBranches(ctx: Ctx, userId: string, branchIds: string[]) {
+  const ids = [...new Set(branchIds)];
+  if (ctx.access.branchRestricted) {
+    if (!ids.length) throw forbidden("PERMISSION_DENIED", "You can only give access to your own branches.");
+    const mine = new Set(ctx.access.branches.map((b) => b.id));
+    if (ids.some((id) => !mine.has(id))) throw forbidden("PERMISSION_DENIED", "You can only give access to your own branches.");
+  }
+  if (ids.length) {
+    const found = await ctx.db.branch.count({ where: { tenantId: ctx.tenantId, id: { in: ids } } });
+    if (found !== ids.length) throw badRequest("Unknown branch.");
+  }
+  await ctx.db.userBranchAccess.deleteMany({ where: { userId, tenantId: ctx.tenantId } });
+  if (ids.length) await ctx.db.userBranchAccess.createMany({ data: ids.map((branchId) => ({ tenantId: ctx.tenantId, userId, branchId })) });
+}
+
 async function loadMember(ctx: Ctx) {
   const u = await ctx.db.user.findFirst({ where: { id: ctx.params.userId, tenantId: ctx.tenantId } });
   if (!u) throw notFound("Staff member");
@@ -75,7 +96,10 @@ route({
     const [users, roles, grantable] = await Promise.all([
       ctx.db.user.findMany({
         where: { tenantId: ctx.tenantId, productAccess: { some: { productCode: ctx.product } } },
-        include: { productAccess: { include: { role: true } }, employeeProfile: { select: { id: true, employeeCode: true } } },
+        include: {
+          productAccess: { include: { role: true } }, employeeProfile: { select: { id: true, employeeCode: true } },
+          branchAccess: { select: { branchId: true } },
+        },
         orderBy: [{ isTenantOwner: "desc" }, { fullName: "asc" }],
       }),
       ctx.db.role.findMany({ where: { productCode: { in: [...PRODUCT_CODES] } }, orderBy: { name: "asc" } }),
@@ -86,6 +110,7 @@ route({
         id: u.id, username: u.username, fullName: u.fullName, phone: u.phone, email: u.email, isActive: u.isActive,
         isTenantOwner: u.isTenantOwner, lastLoginAt: u.lastLoginAt, mustChangePassword: u.mustChangePassword,
         lockedUntil: u.lockedUntil, employeeCode: u.employeeProfile?.employeeCode ?? null,
+        branchIds: u.branchAccess.map((b) => b.branchId),
         access: u.productAccess.filter((a) => a.isActive).map((a) => ({ product: a.productCode, roleCode: a.role.code, roleName: a.role.name })),
       })),
       roles: roles.map((r) => ({ product: r.productCode, code: r.code, name: r.name, description: r.description })),
@@ -103,6 +128,8 @@ route({
     phone: z.string().trim().max(20).optional(),
     email: z.string().trim().max(120).optional(),
     access: accessInput.min(1),
+    /** Restrict to these branches; omitted or [] = every branch. */
+    branchIds: z.array(z.uuid()).max(50).optional(),
   }),
   handler: async (ctx) => {
     const username = `${ctx.user.tenantCode}@${ctx.body.handle}`;
@@ -117,7 +144,10 @@ route({
       },
     });
     await applyAccess(ctx.db, ctx, user.id, ctx.body.access);
-    await ctx.audit("team.user.create", { type: "user", id: user.id }, { username, access: ctx.body.access });
+    // A branch-restricted manager always creates branch-restricted staff.
+    const branchIds = ctx.body.branchIds?.length ? ctx.body.branchIds : ctx.access.branchRestricted ? ctx.access.branches.map((b) => b.id) : [];
+    await applyBranches(ctx, user.id, branchIds);
+    await ctx.audit("team.user.create", { type: "user", id: user.id }, { username, access: ctx.body.access, branchIds });
     ctx.status = 201;
     return { id: user.id, username, temporaryPassword: password };
   },
@@ -130,16 +160,22 @@ route({
     phone: z.string().trim().max(20).nullable().optional(),
     email: z.string().trim().max(120).nullable().optional(),
     access: accessInput.optional(),
+    branchIds: z.array(z.uuid()).max(50).optional(),
   }),
   handler: async (ctx) => {
     const u = await loadMember(ctx);
-    const { access, ...profile } = ctx.body;
+    const { access, branchIds, ...profile } = ctx.body;
+    if (branchIds) {
+      if (u.id === ctx.user.id) throw badRequest("You cannot change your own branch access.");
+      if (u.isTenantOwner) throw badRequest("The business owner always has access to every branch.");
+      await applyBranches(ctx, u.id, branchIds);
+    }
     if (Object.keys(profile).length) await ctx.db.user.update({ where: { id: u.id }, data: profile });
     if (access) {
       if (u.id === ctx.user.id) throw badRequest("You cannot change your own roles.");
       await applyAccess(ctx.db, ctx, u.id, access);
     }
-    await ctx.audit("team.user.update", { type: "user", id: u.id }, { access });
+    await ctx.audit("team.user.update", { type: "user", id: u.id }, { access, branchIds });
     return { ok: true };
   },
 });
@@ -148,6 +184,12 @@ route({
   method: "POST", path: "/:product/team/:userId/reset-password", tag: "team", summary: "Reset a staff password (issues a temporary password)", auth: TEAM,
   handler: async (ctx) => {
     const u = await loadMember(ctx);
+    if (u.authUserId) {
+      await emailPasswordReset(u.email!);
+      await ctx.db.user.update({ where: { id: u.id }, data: { failedLoginCount: 0, lockedUntil: null } });
+      await ctx.audit("team.user.reset_password_email", { type: "user", id: u.id });
+      return { username: u.username, emailed: true, email: u.email };
+    }
     const password = temporaryPassword();
     await ctx.db.user.update({
       where: { id: u.id },

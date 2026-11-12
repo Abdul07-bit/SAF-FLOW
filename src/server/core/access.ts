@@ -87,6 +87,8 @@ export interface ProductAccess {
   /** Fully qualified permission keys of the user's role in this product. */
   permissions: string[];
   branches: { id: string; name: string; code: string; isMain: boolean }[];
+  /** true when the user may only use the branches listed above. */
+  branchRestricted: boolean;
 }
 
 /**
@@ -95,7 +97,7 @@ export interface ProductAccess {
  */
 export async function loadProductAccess(db: Tx, user: SessionUser, product: ProductCode): Promise<ProductAccess> {
   const tenantId = user.tenantId!;
-  const [productRow, sub, overrides, upa, branches] = await Promise.all([
+  const [productRow, sub, overrides, upa, allBranches, branchLimits] = await Promise.all([
     db.product.findUnique({ where: { code: product }, select: { isActive: true } }),
     db.productSubscription.findUnique({
       where: { tenantId_productCode: { tenantId, productCode: product } },
@@ -111,7 +113,13 @@ export async function loadProductAccess(db: Tx, user: SessionUser, product: Prod
       orderBy: [{ isMain: "desc" }, { name: "asc" }],
       select: { id: true, name: true, code: true, isMain: true },
     }),
+    db.userBranchAccess.findMany({ where: { userId: user.id }, select: { branchId: true } }),
   ]);
+  // Branch restriction: owners see every branch; other staff with explicit
+  // branch grants see only those (no grants = every branch).
+  const allowed = new Set(branchLimits.map((b) => b.branchId));
+  const branches = user.isTenantOwner || allowed.size === 0 ? allBranches : allBranches.filter((b) => allowed.has(b.id));
+  const branchRestricted = !user.isTenantOwner && allowed.size > 0;
 
   let features: string[] = [];
   if (sub) {
@@ -133,6 +141,7 @@ export async function loadProductAccess(db: Tx, user: SessionUser, product: Prod
     role: role ? { id: role.id, code: role.code, name: role.name, homeScreen: role.homeScreen } : null,
     permissions: role ? role.permissions.map((p) => p.permissionKey).sort() : [],
     branches,
+    branchRestricted,
   };
 }
 

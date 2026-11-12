@@ -315,6 +315,12 @@ model Tenant {
   billSuppliers       BillSupplier[]
   billPurchases       BillPurchase[]
   billPurchaseItems   BillPurchaseItem[]
+  // SAF Flow foundation
+  staffAssignments    StaffAssignment[]
+  staffAssignBranches StaffAssignmentBranch[]
+  staffAssignModules  StaffAssignmentModule[]
+  invitations         Invitation[]
+  userBranchAccess    UserBranchAccess[]
 
   @@map("tenants")
 }
@@ -353,13 +359,15 @@ model Branch {
 
   tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
-  dineTables       DineTable[]
-  dineOrders       DineOrder[]
-  stayRooms        StayRoom[]
-  stayReservations StayReservation[]
-  billStockLevels  BillStockLevel[]
-  billCounters     BillCounter[]
-  billSales        BillSale[]
+  dineTables              DineTable[]
+  dineOrders              DineOrder[]
+  stayRooms               StayRoom[]
+  stayReservations        StayReservation[]
+  billStockLevels         BillStockLevel[]
+  billCounters            BillCounter[]
+  billSales               BillSale[]
+  staffAssignmentBranches StaffAssignmentBranch[]
+  userAccess              UserBranchAccess[]
 
   @@unique([tenantId, code])
   @@index([tenantId])
@@ -376,9 +384,10 @@ model Product {
   sortOrder   Int      @default(0) @map("sort_order")
   updatedAt   DateTime @updatedAt @map("updated_at")
 
-  plans         Plan[]
-  features      FeatureCatalog[]
-  subscriptions ProductSubscription[]
+  plans                  Plan[]
+  features               FeatureCatalog[]
+  subscriptions          ProductSubscription[]
+  staffAssignmentModules StaffAssignmentModule[]
 
   @@map("products")
 }
@@ -538,7 +547,10 @@ model User {
   tenantId           String?   @map("tenant_id") @db.Uuid
   kind               UserKind
   username           String    @unique
-  passwordHash       String    @map("password_hash")
+  /// Local credential (login-ID accounts). NULL for Supabase-identity accounts.
+  passwordHash       String?   @map("password_hash")
+  /// Supabase Auth user id (auth.users.id) for email-identity accounts.
+  authUserId         String?   @unique @map("auth_user_id") @db.Uuid
   fullName           String    @map("full_name")
   email              String?
   phone              String?
@@ -553,14 +565,21 @@ model User {
   createdAt          DateTime  @default(now()) @map("created_at")
   updatedAt          DateTime  @updatedAt @map("updated_at")
 
-  tenant          Tenant?                 @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  productAccess   UserProductAccess[]
-  sessions        Session[]
-  employeeProfile EmployeeProfile?
-  waiterOrders    DineOrder[]             @relation("OrderWaiter")
-  cashierSales    BillSale[]              @relation("SaleCashier")
-  hkTasks         StayHousekeepingTask[]  @relation("HkAssignee")
-  maintenanceJobs StayMaintenanceRecord[] @relation("MaintAssignee")
+  tenant           Tenant?                 @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  productAccess    UserProductAccess[]
+  sessions         Session[]
+  employeeProfile  EmployeeProfile?
+  waiterOrders     DineOrder[]             @relation("OrderWaiter")
+  cashierSales     BillSale[]              @relation("SaleCashier")
+  hkTasks          StayHousekeepingTask[]  @relation("HkAssignee")
+  maintenanceJobs  StayMaintenanceRecord[] @relation("MaintAssignee")
+  platformRoleRef  PlatformRole?           @relation(fields: [platformRole], references: [code])
+  staffProfile     PlatformStaffProfile?
+  staffAssignments StaffAssignment[]       @relation("AssignmentStaff")
+  assignmentsMade  StaffAssignment[]       @relation("AssignmentGrantor")
+  invitations      Invitation[]            @relation("InvitationUser")
+  invitationsSent  Invitation[]            @relation("InvitationSender")
+  branchAccess     UserBranchAccess[]
 
   @@index([tenantId])
   @@map("users")
@@ -1617,4 +1636,178 @@ model BillPurchaseItem {
   product  BillProduct  @relation(fields: [productId], references: [id])
 
   @@map("bill_purchase_items")
+}
+
+// ===========================================================================
+// SAF Flow foundation: platform RBAC, SAF Team assignments, invitations,
+// customer branch restrictions. See docs/SAF-FLOW-ARCHITECTURE.md.
+// ===========================================================================
+
+enum InvitationStatus {
+  PENDING
+  ACCEPTED
+  REVOKED
+  EXPIRED
+}
+
+/// Platform (SmartAutoFlex internal) role. Not tenant-scoped.
+model PlatformRole {
+  code        String   @id
+  name        String
+  description String   @default("")
+  /// true: sees every business (RLS bypass). false: only assigned businesses.
+  allTenants  Boolean  @default(false) @map("all_tenants")
+  isSystem    Boolean  @default(false) @map("is_system")
+  /// Set once an administrator edits the role; the seed then leaves it alone.
+  customized  Boolean  @default(false)
+  sortOrder   Int      @default(0) @map("sort_order")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  permissions PlatformRolePermission[]
+  users       User[]
+
+  @@map("platform_roles")
+}
+
+model PlatformPermission {
+  key         String @id
+  area        String
+  description String
+
+  roles            PlatformRolePermission[]
+  assignmentGrants StaffAssignmentPermission[]
+
+  @@map("platform_permissions")
+}
+
+model PlatformRolePermission {
+  roleCode      String @map("role_code")
+  permissionKey String @map("permission_key")
+
+  role       PlatformRole       @relation(fields: [roleCode], references: [code], onDelete: Cascade)
+  permission PlatformPermission @relation(fields: [permissionKey], references: [key], onDelete: Cascade)
+
+  @@id([roleCode, permissionKey])
+  @@map("platform_role_permissions")
+}
+
+/// HR profile of a SAF Team member (users.kind = PLATFORM).
+model PlatformStaffProfile {
+  userId       String   @id @map("user_id") @db.Uuid
+  employeeCode String   @unique @map("employee_code")
+  department   String?
+  designation  String?
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("platform_staff_profiles")
+}
+
+/// A SAF Team member's access to one business. No row = no access (unless
+/// the member's role has allTenants). Enforced by RLS. Empty branch / module
+/// / permission lists mean "no extra restriction" within the business.
+model StaffAssignment {
+  id           String    @id @default(uuid()) @db.Uuid
+  userId       String    @map("user_id") @db.Uuid
+  tenantId     String    @map("tenant_id") @db.Uuid
+  isActive     Boolean   @default(true) @map("is_active")
+  note         String?
+  assignedById String?   @map("assigned_by_id") @db.Uuid
+  revokedAt    DateTime? @map("revoked_at")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+
+  user        User                        @relation("AssignmentStaff", fields: [userId], references: [id], onDelete: Cascade)
+  tenant      Tenant                      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  assignedBy  User?                       @relation("AssignmentGrantor", fields: [assignedById], references: [id], onDelete: SetNull)
+  branches    StaffAssignmentBranch[]
+  modules     StaffAssignmentModule[]
+  permissions StaffAssignmentPermission[]
+
+  @@unique([userId, tenantId])
+  @@index([tenantId])
+  @@map("staff_assignments")
+}
+
+model StaffAssignmentBranch {
+  assignmentId String @map("assignment_id") @db.Uuid
+  branchId     String @map("branch_id") @db.Uuid
+  tenantId     String @map("tenant_id") @db.Uuid
+
+  assignment StaffAssignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  branch     Branch          @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  tenant     Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@id([assignmentId, branchId])
+  @@map("staff_assignment_branches")
+}
+
+model StaffAssignmentModule {
+  assignmentId String @map("assignment_id") @db.Uuid
+  productCode  String @map("product_code")
+  tenantId     String @map("tenant_id") @db.Uuid
+
+  assignment StaffAssignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  product    Product         @relation(fields: [productCode], references: [code], onDelete: Cascade)
+  tenant     Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@id([assignmentId, productCode])
+  @@map("staff_assignment_modules")
+}
+
+/// Narrows the member's role permissions for this one business.
+model StaffAssignmentPermission {
+  assignmentId  String @map("assignment_id") @db.Uuid
+  permissionKey String @map("permission_key")
+
+  assignment StaffAssignment    @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  permission PlatformPermission @relation(fields: [permissionKey], references: [key], onDelete: Cascade)
+
+  @@id([assignmentId, permissionKey])
+  @@map("staff_assignment_permissions")
+}
+
+/// Email invitation for a Supabase-identity account (SAF Team member,
+/// business owner or business staff). The SAF user row is created inactive
+/// at invite time and activated when the invitation is accepted.
+model Invitation {
+  id          String           @id @default(uuid()) @db.Uuid
+  tenantId    String?          @map("tenant_id") @db.Uuid
+  userId      String           @map("user_id") @db.Uuid
+  email       String
+  status      InvitationStatus @default(PENDING)
+  /// "email" when Supabase sent it, "link" when an admin shares the link.
+  delivery    String           @default("email")
+  invitedById String?          @map("invited_by_id") @db.Uuid
+  expiresAt   DateTime         @map("expires_at")
+  sentAt      DateTime         @default(now()) @map("sent_at")
+  acceptedAt  DateTime?        @map("accepted_at")
+  revokedAt   DateTime?        @map("revoked_at")
+  createdAt   DateTime         @default(now()) @map("created_at")
+
+  tenant    Tenant? @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user      User    @relation("InvitationUser", fields: [userId], references: [id], onDelete: Cascade)
+  invitedBy User?   @relation("InvitationSender", fields: [invitedById], references: [id], onDelete: SetNull)
+
+  @@index([tenantId])
+  @@index([userId])
+  @@map("invitations")
+}
+
+/// Customer staff restricted to specific branches. No rows = all branches.
+model UserBranchAccess {
+  tenantId String @map("tenant_id") @db.Uuid
+  userId   String @map("user_id") @db.Uuid
+  branchId String @map("branch_id") @db.Uuid
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  branch Branch @relation(fields: [branchId], references: [id], onDelete: Cascade)
+
+  @@id([userId, branchId])
+  @@index([tenantId])
+  @@map("user_branch_access")
 }

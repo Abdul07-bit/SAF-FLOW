@@ -23,15 +23,19 @@ Each endpoint declares exactly one policy, enforced by the router before the han
 - **Tenant user of a product** - checks, in order: business active, product subscribed, subscription usable,
   the user has a role in that product, the plan (or a per-business override) includes the feature, the role grants the permission.
 
-280 endpoints.
+296 endpoints.
 
 ## Authentication & session
 
 | Method | Path | Summary | Authorization |
 |---|---|---|---|
 | POST | `/api/auth/change-password` | Change own password (required after first login with a temporary password) | Any signed-in user. |
-| POST | `/api/auth/login` | Sign in with login ID and password | Public (no session). |
+| POST | `/api/auth/link/complete` | Set a password from an invitation / reset link and sign in | Public (no session). |
+| POST | `/api/auth/link/inspect` | Describe an invitation / reset link before the user sets a password | Public (no session). |
+| POST | `/api/auth/login` | Sign in with email or login ID and password | Public (no session). |
 | POST | `/api/auth/logout` | Sign out (revokes the session) | Any signed-in user. |
+| POST | `/api/auth/logout-all` | Sign out of every device (revokes all sessions) | Any signed-in user. |
+| POST | `/api/auth/password-reset` | Email a password-reset link (email accounts). Always answers the same way. | Public (no session). |
 | GET | `/api/me` | Current user, business and subscribed SAF products | Any signed-in user. |
 | GET | `/api/me/notifications` | In-app notifications for the current user | Any signed-in user. |
 | POST | `/api/me/notifications/read-all` | Mark all notifications read | Any signed-in user. |
@@ -412,6 +416,23 @@ Each endpoint declares exactly one policy, enforced by the router before the han
 | GET | `/api/dine/tables/:id` | Get one table | Tenant user of dine with a usable subscription; plan feature: tables or waiter or pos or cashier or orders; role permission: tables.view or pos.use or orders.view. |
 | PATCH | `/api/dine/tables/:id` | Update table | Tenant user of dine with a usable subscription; plan feature: tables; role permission: tables.manage. |
 | POST | `/api/dine/tables/:id/restore` | Reactivate table | Tenant user of dine with a usable subscription; plan feature: tables; role permission: tables.manage. |
+
+## saf-team
+
+| Method | Path | Summary | Authorization |
+|---|---|---|---|
+| GET | `/api/admin/me` | Your platform role, permissions and assigned businesses | SAF Super Admin only. |
+| GET | `/api/admin/platform-roles` | Platform roles with their permissions, and the permission catalog | SAF Super Admin only. |
+| POST | `/api/admin/platform-roles` | Create a custom platform role | SAF Super Admin only. |
+| DELETE | `/api/admin/platform-roles/:code` | Delete an unused custom platform role | SAF Super Admin only. |
+| PUT | `/api/admin/platform-roles/:code` | Edit a platform role's permissions and scope | SAF Super Admin only. |
+| GET | `/api/admin/team` | SAF Team members | SAF Super Admin only. |
+| POST | `/api/admin/team` | Invite a SAF Team member (email invitation, no password is ever set by an admin) | SAF Super Admin only. |
+| GET | `/api/admin/team/:id` | Team member with assignments and recent activity | SAF Super Admin only. |
+| PATCH | `/api/admin/team/:id` | Edit, re-role, suspend or reactivate a team member | SAF Super Admin only. |
+| DELETE | `/api/admin/team/:id/assignments/:tenantId` | Revoke a member's access to a business (effective immediately) | SAF Super Admin only. |
+| PUT | `/api/admin/team/:id/assignments/:tenantId` | Assign a member to a business, optionally limited to branches, modules and permissions | SAF Super Admin only. |
+| POST | `/api/admin/team/:id/resend-invite` | Send a fresh invitation to a member who has not accepted yet | SAF Super Admin only. |
 
 ## stay.expenses
 

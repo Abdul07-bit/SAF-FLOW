@@ -6,6 +6,7 @@ import { route } from "../http/router";
 import { badRequest, conflict, notFound } from "../http/errors";
 import { hashPassword } from "../auth/password";
 import { revokeUserSessions } from "../auth/session";
+import { emailPasswordReset } from "../auth/identity";
 import { temporaryPassword, isValidBusinessCode } from "../core/ids";
 import { isUsable, summarize } from "../core/access";
 import {
@@ -17,7 +18,6 @@ import { fileUrl, saveImage } from "../core/storage";
 import { notify } from "../core/notify";
 import { isRazorpayConfigured } from "../payments/razorpay";
 
-const P = { platform: true } as const;
 const isoDate = z.string().refine(isISODate, "Use YYYY-MM-DD");
 const pageQuery = z.object({
   q: z.string().max(100).optional(),
@@ -30,7 +30,7 @@ const pageQuery = z.object({
 // ---------------------------------------------------------------------------
 
 route({
-  method: "GET", path: "/admin/overview", tag: "admin", summary: "Super Admin dashboard metrics", auth: P,
+  method: "GET", path: "/admin/overview", tag: "admin", summary: "Super Admin dashboard metrics", auth: { platform: "platform.dashboard.read" },
   handler: async ({ db }) => {
     const now = new Date();
     const fy = financialYear(todayIST());
@@ -91,7 +91,7 @@ route({
 // ---------------------------------------------------------------------------
 
 route({
-  method: "GET", path: "/admin/businesses", tag: "admin", summary: "List businesses (tenants)", auth: P,
+  method: "GET", path: "/admin/businesses", tag: "admin", summary: "List businesses (tenants)", auth: { platform: "platform.business.read" },
   query: pageQuery.extend({
     status: z.enum(["ACTIVE", "SUSPENDED", "CLOSED"]).optional(),
     product: z.enum(PRODUCT_CODES).optional(),
@@ -135,7 +135,7 @@ route({
 
 route({
   method: "GET", path: "/admin/businesses/code-available", tag: "admin", summary: "Check whether a business code is free",
-  auth: P, query: z.object({ code: z.string().max(20) }),
+  auth: { platform: "platform.business.create" }, query: z.object({ code: z.string().max(20) }),
   handler: async ({ db, query }) => {
     const code = query.code.trim().toUpperCase();
     if (!isValidBusinessCode(code)) return { code, available: false, reason: "Use 2-12 letters/digits starting with a letter." };
@@ -146,11 +146,16 @@ route({
 
 route({
   method: "POST", path: "/admin/businesses", tag: "admin",
-  summary: "Add new business: tenant, products, plans and manager credentials", auth: P, body: newBusinessSchema,
+  summary: "Add new business: tenant, products, plans and manager credentials", auth: { platform: "platform.business.create", elevated: true }, body: newBusinessSchema,
   handler: async (ctx) => {
     const result = await createBusiness(ctx.db, ctx.body, ctx.user);
+    // A member who only sees assigned businesses is assigned to the one they
+    // create, otherwise it would vanish from their view immediately.
+    if (!ctx.platform.allTenants)
+      await ctx.db.staffAssignment.create({ data: { userId: ctx.user.id, tenantId: result.tenantId, assignedById: ctx.user.id, note: "Created this business" } });
     await ctx.audit("admin.business.create", { type: "tenant", id: result.tenantId, tenantId: result.tenantId }, {
       code: result.code, products: ctx.body.products.map((p) => `${p.productCode}:${p.tier}:${p.billingCycle}`),
+      autoAssigned: !ctx.platform.allTenants,
     });
     ctx.status = 201;
     return result;
@@ -158,7 +163,7 @@ route({
 });
 
 route({
-  method: "GET", path: "/admin/businesses/:id", tag: "admin", summary: "Business detail", auth: P,
+  method: "GET", path: "/admin/businesses/:id", tag: "admin", summary: "Business detail", auth: { platform: "platform.business.read", target: "business" },
   handler: async ({ db, params }) => {
     const t = await db.tenant.findUnique({
       where: { id: params.id },
@@ -204,7 +209,7 @@ route({
 });
 
 route({
-  method: "PATCH", path: "/admin/businesses/:id", tag: "admin", summary: "Edit business profile", auth: P,
+  method: "PATCH", path: "/admin/businesses/:id", tag: "admin", summary: "Edit business profile", auth: { platform: "platform.business.update", target: "business" },
   body: businessProfileSchema.partial(),
   handler: async ({ db, params, body, audit }) => {
     const t = await db.tenant.findUnique({ where: { id: params.id } });
@@ -217,7 +222,7 @@ route({
 });
 
 route({
-  method: "POST", path: "/admin/businesses/:id/status", tag: "admin", summary: "Suspend or activate a business", auth: P,
+  method: "POST", path: "/admin/businesses/:id/status", tag: "admin", summary: "Suspend or activate a business", auth: { platform: "platform.business.suspend", target: "business" },
   body: z.object({ status: z.enum(["ACTIVE", "SUSPENDED"]), reason: z.string().max(300).optional() }),
   handler: async ({ db, params, body, audit, user }) => {
     const t = await db.tenant.findUnique({ where: { id: params.id } });
@@ -236,7 +241,7 @@ route({
 });
 
 route({
-  method: "POST", path: "/admin/businesses/:id/products", tag: "admin", summary: "Activate another SAF product for a business", auth: P,
+  method: "POST", path: "/admin/businesses/:id/products", tag: "admin", summary: "Activate another SAF product for a business", auth: { platform: "platform.entitlements.manage", target: "business" },
   body: productSelectionSchema.extend({ paymentMethod: paymentMethodSchema.optional(), paymentReference: z.string().max(100).optional() }),
   handler: async (ctx) => {
     const t = await ctx.db.tenant.findUnique({ where: { id: ctx.params.id } });
@@ -255,7 +260,7 @@ route({
 });
 
 route({
-  method: "POST", path: "/admin/businesses/:id/logo", tag: "admin", summary: "Upload business logo (PNG/JPEG)", auth: P, multipart: true,
+  method: "POST", path: "/admin/businesses/:id/logo", tag: "admin", summary: "Upload business logo (PNG/JPEG)", auth: { platform: "platform.business.update", target: "business" }, multipart: true,
   handler: async ({ db, params, form, audit }) => {
     const t = await db.tenant.findUnique({ where: { id: params.id } });
     if (!t) throw notFound("Business");
@@ -271,7 +276,7 @@ route({
 // ---------------------------------------------------------------------------
 
 route({
-  method: "GET", path: "/admin/products", tag: "admin", summary: "SAF products with subscriber counts", auth: P,
+  method: "GET", path: "/admin/products", tag: "admin", summary: "SAF products with subscriber counts", auth: { platform: "platform.catalog.read" },
   handler: async ({ db }) => {
     const [products, subs] = await Promise.all([
       db.product.findMany({ orderBy: { sortOrder: "asc" }, include: { plans: { orderBy: { tier: "asc" } }, _count: { select: { features: true } } } }),
@@ -296,7 +301,7 @@ route({
 });
 
 route({
-  method: "PATCH", path: "/admin/products/:code", tag: "admin", summary: "Edit a SAF product / enable or disable it platform-wide", auth: P,
+  method: "PATCH", path: "/admin/products/:code", tag: "admin", summary: "Edit a SAF product / enable or disable it platform-wide", auth: { platform: "platform.catalog.manage" },
   body: z.object({
     name: z.string().min(2).max(60).optional(), tagline: z.string().max(120).optional(),
     description: z.string().max(500).optional(), isActive: z.boolean().optional(),
@@ -309,7 +314,7 @@ route({
 });
 
 route({
-  method: "GET", path: "/admin/plans", tag: "admin", summary: "Plans and pricing for every product", auth: P,
+  method: "GET", path: "/admin/plans", tag: "admin", summary: "Plans and pricing for every product", auth: { platform: "platform.catalog.read" },
   handler: async ({ db }) =>
     db.plan.findMany({
       orderBy: [{ productCode: "asc" }, { tier: "asc" }],
@@ -318,7 +323,7 @@ route({
 });
 
 route({
-  method: "PATCH", path: "/admin/plans/:id", tag: "admin", summary: "Change plan pricing (per product)", auth: P,
+  method: "PATCH", path: "/admin/plans/:id", tag: "admin", summary: "Change plan pricing (per product)", auth: { platform: "platform.catalog.manage" },
   body: z.object({
     name: z.string().min(2).max(40).optional(),
     description: z.string().max(300).optional(),
@@ -342,7 +347,7 @@ route({
 });
 
 route({
-  method: "GET", path: "/admin/features", tag: "admin", summary: "Feature catalog with the Basic / Growth matrix per product", auth: P,
+  method: "GET", path: "/admin/features", tag: "admin", summary: "Feature catalog with the Basic / Growth matrix per product", auth: { platform: "platform.catalog.read" },
   handler: async ({ db }) => {
     const [features, plans] = await Promise.all([
       db.featureCatalog.findMany({ orderBy: { sortOrder: "asc" } }),
@@ -363,7 +368,7 @@ route({
 });
 
 route({
-  method: "PUT", path: "/admin/plans/:id/features/:key", tag: "admin", summary: "Include or exclude a feature in a plan", auth: P,
+  method: "PUT", path: "/admin/plans/:id/features/:key", tag: "admin", summary: "Include or exclude a feature in a plan", auth: { platform: "platform.catalog.manage" },
   body: z.object({ enabled: z.boolean() }),
   handler: async ({ db, params, body, audit }) => {
     const plan = await db.plan.findUnique({ where: { id: params.id } });
@@ -378,7 +383,7 @@ route({
 });
 
 route({
-  method: "GET", path: "/admin/businesses/:id/features", tag: "admin", summary: "Effective features of a business per subscribed product", auth: P,
+  method: "GET", path: "/admin/businesses/:id/features", tag: "admin", summary: "Effective features of a business per subscribed product", auth: { platform: "platform.business.read", target: "business" },
   handler: async ({ db, params }) => {
     const t = await db.tenant.findUnique({
       where: { id: params.id },
@@ -398,7 +403,7 @@ route({
 });
 
 route({
-  method: "PUT", path: "/admin/businesses/:id/features/:key", tag: "admin", summary: "Grant / revoke a single feature for one business", auth: P,
+  method: "PUT", path: "/admin/businesses/:id/features/:key", tag: "admin", summary: "Grant / revoke a single feature for one business", auth: { platform: "platform.entitlements.manage", target: "business" },
   body: z.object({ mode: z.enum(["inherit", "grant", "revoke"]), note: z.string().max(200).optional() }),
   handler: async ({ db, params, body, audit }) => {
     const feature = await db.featureCatalog.findUnique({ where: { key: params.key } });
@@ -420,7 +425,7 @@ route({
 // ---------------------------------------------------------------------------
 
 route({
-  method: "GET", path: "/admin/subscriptions", tag: "admin", summary: "All product subscriptions", auth: P,
+  method: "GET", path: "/admin/subscriptions", tag: "admin", summary: "All product subscriptions", auth: { platform: "platform.subscription.read" },
   query: z.object({
     q: z.string().max(100).optional(),
     product: z.enum(PRODUCT_CODES).optional(),
@@ -452,7 +457,7 @@ route({
 
 route({
   method: "POST", path: "/admin/subscriptions/:id/renew", tag: "admin",
-  summary: "Renew for one billing cycle (optionally record the payment)", auth: P,
+  summary: "Renew for one billing cycle (optionally record the payment)", auth: { platform: "platform.subscription.manage", target: "subscription" },
   body: z.object({
     billingCycle: z.enum(["MONTHLY", "ANNUAL"]).optional(),
     payment: z.object({ method: paymentMethodSchema, reference: z.string().max(100).optional() }).optional(),
@@ -465,7 +470,7 @@ route({
 });
 
 route({
-  method: "POST", path: "/admin/subscriptions/:id/change-plan", tag: "admin", summary: "Upgrade / downgrade a product plan", auth: P,
+  method: "POST", path: "/admin/subscriptions/:id/change-plan", tag: "admin", summary: "Upgrade / downgrade a product plan", auth: { platform: "platform.subscription.manage", target: "subscription" },
   body: z.object({
     tier: z.enum(["BASIC", "GROWTH"]),
     billingCycle: z.enum(["MONTHLY", "ANNUAL"]).optional(),
@@ -488,7 +493,7 @@ route({
 });
 
 route({
-  method: "POST", path: "/admin/subscriptions/:id/status", tag: "admin", summary: "Suspend, reactivate or cancel a subscription", auth: P,
+  method: "POST", path: "/admin/subscriptions/:id/status", tag: "admin", summary: "Suspend, reactivate or cancel a subscription", auth: { platform: "platform.subscription.manage", target: "subscription" },
   body: z.object({ action: z.enum(["suspend", "reactivate", "cancel"]), reason: z.string().max(300).optional() }),
   handler: async (ctx) => {
     const sub = await ctx.db.productSubscription.findUnique({ where: { id: ctx.params.id } });
@@ -500,7 +505,7 @@ route({
 });
 
 route({
-  method: "PATCH", path: "/admin/subscriptions/:id", tag: "admin", summary: "Adjust expiry date, grace period or auto-renew", auth: P,
+  method: "PATCH", path: "/admin/subscriptions/:id", tag: "admin", summary: "Adjust expiry date, grace period or auto-renew", auth: { platform: "platform.subscription.manage", target: "subscription" },
   body: z.object({ expiryDate: isoDate.optional(), graceDays: z.number().int().min(0).max(90).nullable().optional(), autoRenew: z.boolean().optional() }),
   handler: async (ctx) => {
     const sub = await ctx.db.productSubscription.findUnique({ where: { id: ctx.params.id } });
@@ -512,7 +517,7 @@ route({
 });
 
 route({
-  method: "GET", path: "/admin/subscriptions/:id/events", tag: "admin", summary: "Subscription history", auth: P,
+  method: "GET", path: "/admin/subscriptions/:id/events", tag: "admin", summary: "Subscription history", auth: { platform: "platform.subscription.read", target: "subscription" },
   handler: ({ db, params }) => db.subscriptionEvent.findMany({ where: { subscriptionId: params.id }, orderBy: { createdAt: "desc" } }),
 });
 
@@ -521,7 +526,7 @@ route({
 // ---------------------------------------------------------------------------
 
 route({
-  method: "GET", path: "/admin/managers", tag: "admin", summary: "Business manager (owner) accounts", auth: P, query: pageQuery,
+  method: "GET", path: "/admin/managers", tag: "admin", summary: "Business manager (owner) accounts", auth: { platform: "platform.users.read" }, query: pageQuery,
   handler: async ({ db, query }) => {
     const users = await db.user.findMany({
       where: {
@@ -541,7 +546,7 @@ route({
 });
 
 route({
-  method: "GET", path: "/admin/employees", tag: "admin", summary: "Employee accounts across all businesses", auth: P,
+  method: "GET", path: "/admin/employees", tag: "admin", summary: "Employee accounts across all businesses", auth: { platform: "platform.users.read" },
   query: pageQuery.extend({ product: z.enum(PRODUCT_CODES).optional(), tenantId: z.uuid().optional() }),
   handler: async ({ db, query }) => {
     const where: Prisma.UserWhereInput = {
@@ -572,10 +577,17 @@ route({
 });
 
 route({
-  method: "POST", path: "/admin/users/:id/reset-password", tag: "admin", summary: "Issue a new temporary password", auth: P,
+  method: "POST", path: "/admin/users/:id/reset-password", tag: "admin", summary: "Issue a new temporary password", auth: { platform: "platform.users.manage", target: "user" },
   handler: async ({ db, params, audit }) => {
     const u = await db.user.findUnique({ where: { id: params.id } });
     if (!u) throw notFound("User");
+    if (u.authUserId) {
+      // Email accounts never get a temporary password: Supabase emails a reset link.
+      await emailPasswordReset(u.email!);
+      await db.user.update({ where: { id: u.id }, data: { failedLoginCount: 0, lockedUntil: null } });
+      await audit("admin.user.reset_password_email", { type: "user", id: u.id, tenantId: u.tenantId });
+      return { username: u.username, emailed: true, email: u.email };
+    }
     const password = temporaryPassword();
     await db.user.update({
       where: { id: u.id },
@@ -588,7 +600,7 @@ route({
 });
 
 route({
-  method: "POST", path: "/admin/users/:id/unlock", tag: "admin", summary: "Unlock an account locked by failed sign-ins", auth: P,
+  method: "POST", path: "/admin/users/:id/unlock", tag: "admin", summary: "Unlock an account locked by failed sign-ins", auth: { platform: "platform.users.manage", target: "user" },
   handler: async ({ db, params, audit }) => {
     const u = await db.user.update({ where: { id: params.id }, data: { failedLoginCount: 0, lockedUntil: null } });
     await audit("admin.user.unlock", { type: "user", id: u.id, tenantId: u.tenantId });
@@ -597,7 +609,7 @@ route({
 });
 
 route({
-  method: "POST", path: "/admin/users/:id/status", tag: "admin", summary: "Enable or disable any account", auth: P,
+  method: "POST", path: "/admin/users/:id/status", tag: "admin", summary: "Enable or disable any account", auth: { platform: "platform.users.manage", target: "user" },
   body: z.object({ isActive: z.boolean() }),
   handler: async ({ db, params, body, audit, user }) => {
     if (params.id === user.id) throw badRequest("You cannot disable your own account.");
@@ -613,7 +625,7 @@ route({
 // ---------------------------------------------------------------------------
 
 route({
-  method: "GET", path: "/admin/invoices", tag: "admin", summary: "SAF invoices", auth: P,
+  method: "GET", path: "/admin/invoices", tag: "admin", summary: "SAF invoices", auth: { platform: "platform.billing.read" },
   query: pageQuery.extend({ status: z.enum(["ISSUED", "PAID", "VOID"]).optional(), tenantId: z.uuid().optional() }),
   handler: async ({ db, query }) => {
     const where: Prisma.InvoiceWhereInput = {
@@ -639,7 +651,7 @@ route({
 });
 
 route({
-  method: "GET", path: "/admin/invoices/:id", tag: "admin", summary: "Invoice detail (printable)", auth: P,
+  method: "GET", path: "/admin/invoices/:id", tag: "admin", summary: "Invoice detail (printable)", auth: { platform: "platform.billing.read", target: "invoice" },
   handler: async ({ db, params }) => {
     const inv = await db.invoice.findUnique({ where: { id: params.id }, include: { payments: true, tenant: { include: { business: true } } } });
     if (!inv) throw notFound("Invoice");
@@ -648,7 +660,7 @@ route({
 });
 
 route({
-  method: "POST", path: "/admin/invoices", tag: "admin", summary: "Raise a custom invoice", auth: P,
+  method: "POST", path: "/admin/invoices", tag: "admin", summary: "Raise a custom invoice", auth: { platform: "platform.billing.manage", target: "bodyTenant" },
   body: z.object({
     tenantId: z.uuid(), productCode: z.enum(PRODUCT_CODES).optional(),
     description: z.string().min(3).max(300), subtotal: z.number().int().min(1),
@@ -662,7 +674,7 @@ route({
 });
 
 route({
-  method: "POST", path: "/admin/invoices/:id/void", tag: "admin", summary: "Void an unpaid invoice", auth: P,
+  method: "POST", path: "/admin/invoices/:id/void", tag: "admin", summary: "Void an unpaid invoice", auth: { platform: "platform.billing.manage", target: "invoice" },
   body: z.object({ reason: z.string().max(200).optional() }),
   handler: async ({ db, params, audit, body }) => {
     const inv = await db.invoice.findUnique({ where: { id: params.id } });
@@ -675,7 +687,7 @@ route({
 });
 
 route({
-  method: "GET", path: "/admin/payments", tag: "admin", summary: "Payment history across businesses", auth: P,
+  method: "GET", path: "/admin/payments", tag: "admin", summary: "Payment history across businesses", auth: { platform: "platform.billing.read" },
   query: pageQuery.extend({ tenantId: z.uuid().optional(), method: paymentMethodSchema.optional(), from: isoDate.optional(), to: isoDate.optional() }),
   handler: async ({ db, query }) => {
     const where: Prisma.PaymentWhereInput = {
@@ -704,7 +716,7 @@ route({
 });
 
 route({
-  method: "POST", path: "/admin/payments", tag: "admin", summary: "Record a manual payment against an invoice", auth: P,
+  method: "POST", path: "/admin/payments", tag: "admin", summary: "Record a manual payment against an invoice", auth: { platform: "platform.billing.manage", target: "bodyInvoice" },
   body: z.object({
     invoiceId: z.uuid(), amount: z.number().int().min(1).optional(), method: paymentMethodSchema,
     reference: z.string().max(100).optional(), notes: z.string().max(300).optional(), paidAt: isoDate.optional(),
@@ -723,7 +735,7 @@ route({
 // ---------------------------------------------------------------------------
 
 route({
-  method: "GET", path: "/admin/analytics/revenue", tag: "admin", summary: "Revenue analytics (paid invoices, excl. GST)", auth: P,
+  method: "GET", path: "/admin/analytics/revenue", tag: "admin", summary: "Revenue analytics (paid invoices, excl. GST)", auth: { platform: "platform.revenue.read" },
   query: z.object({ months: z.coerce.number().int().min(3).max(36).default(12) }),
   handler: async ({ db, query }) => {
     const today = todayIST();
@@ -766,7 +778,7 @@ route({
 // ---------------------------------------------------------------------------
 
 route({
-  method: "GET", path: "/admin/support/tickets", tag: "admin", summary: "Support tickets from all businesses", auth: P,
+  method: "GET", path: "/admin/support/tickets", tag: "admin", summary: "Support tickets from all businesses", auth: { platform: "platform.support.read" },
   query: z.object({ status: z.enum(["OPEN", "IN_PROGRESS", "RESOLVED", "CLOSED"]).optional() }),
   handler: async ({ db, query }) => {
     const items = await db.supportTicket.findMany({
@@ -779,7 +791,7 @@ route({
 });
 
 route({
-  method: "GET", path: "/admin/support/tickets/:id", tag: "admin", summary: "Support ticket thread", auth: P,
+  method: "GET", path: "/admin/support/tickets/:id", tag: "admin", summary: "Support ticket thread", auth: { platform: "platform.support.read", target: "ticket" },
   handler: async ({ db, params }) => {
     const t = await db.supportTicket.findUnique({
       where: { id: params.id },
@@ -791,7 +803,7 @@ route({
 });
 
 route({
-  method: "POST", path: "/admin/support/tickets/:id/messages", tag: "admin", summary: "Reply to a support ticket", auth: P,
+  method: "POST", path: "/admin/support/tickets/:id/messages", tag: "admin", summary: "Reply to a support ticket", auth: { platform: "platform.support.manage", target: "ticket" },
   body: z.object({ body: z.string().trim().min(1).max(4000) }),
   handler: async ({ db, params, body, user }) => {
     const t = await db.supportTicket.findUnique({ where: { id: params.id } });
@@ -809,13 +821,13 @@ route({
 });
 
 route({
-  method: "PATCH", path: "/admin/support/tickets/:id", tag: "admin", summary: "Change ticket status / priority", auth: P,
+  method: "PATCH", path: "/admin/support/tickets/:id", tag: "admin", summary: "Change ticket status / priority", auth: { platform: "platform.support.manage", target: "ticket" },
   body: z.object({ status: z.enum(["OPEN", "IN_PROGRESS", "RESOLVED", "CLOSED"]).optional(), priority: z.enum(["LOW", "NORMAL", "HIGH", "URGENT"]).optional() }),
   handler: ({ db, params, body }) => db.supportTicket.update({ where: { id: params.id }, data: body }),
 });
 
 route({
-  method: "GET", path: "/admin/audit-logs", tag: "admin", summary: "Audit trail (filterable)", auth: P,
+  method: "GET", path: "/admin/audit-logs", tag: "admin", summary: "Audit trail (filterable)", auth: { platform: "platform.audit.read" },
   query: pageQuery.extend({ tenantId: z.uuid().optional(), action: z.string().max(80).optional(), from: isoDate.optional(), to: isoDate.optional() }),
   handler: async ({ db, query }) => {
     const where: Prisma.AuditLogWhereInput = {
@@ -833,7 +845,7 @@ route({
 });
 
 route({
-  method: "GET", path: "/admin/settings", tag: "admin", summary: "Global platform settings and integration status", auth: P,
+  method: "GET", path: "/admin/settings", tag: "admin", summary: "Global platform settings and integration status", auth: { platform: "platform.settings.read" },
   handler: async ({ db }) => ({
     settings: await getPlatformSettings(db),
     integrations: {
@@ -846,7 +858,7 @@ route({
 });
 
 route({
-  method: "PUT", path: "/admin/settings", tag: "admin", summary: "Update global platform settings", auth: P,
+  method: "PUT", path: "/admin/settings", tag: "admin", summary: "Update global platform settings", auth: { platform: "platform.settings.manage" },
   body: platformSettingsSchema.partial(),
   handler: async ({ db, body, audit }) => {
     const s = await savePlatformSettings(db, body);
@@ -856,12 +868,12 @@ route({
 });
 
 route({
-  method: "POST", path: "/admin/jobs/renewals", tag: "admin", summary: "Run the renewal job now (expiry, invoices, reminders)", auth: P,
+  method: "POST", path: "/admin/jobs/renewals", tag: "admin", summary: "Run the renewal job now (expiry, invoices, reminders)", auth: { platform: "platform.jobs.run" },
   handler: async ({ db }) => runRenewalJob(db),
 });
 
 // Utility for the Add Business form: default dates
 route({
-  method: "GET", path: "/admin/defaults", tag: "admin", summary: "Defaults for onboarding forms (today, plan prices)", auth: P,
+  method: "GET", path: "/admin/defaults", tag: "admin", summary: "Defaults for onboarding forms (today, plan prices)", auth: { platform: "platform.dashboard.read" },
   handler: async ({ db }) => ({ today: todayIST(), tomorrow: addDays(todayIST(), 1), plans: await db.plan.findMany({ orderBy: [{ productCode: "asc" }, { tier: "asc" }] }) }),
 });

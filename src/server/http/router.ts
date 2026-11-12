@@ -1,7 +1,9 @@
 import { Prisma } from "@prisma/client";
 import { ZodError, type ZodType } from "zod";
 import { isProductCode, type ProductCode } from "@/config/catalog";
-import { withPlatform, withTenant, type Tx } from "../db";
+import { withPlatform, withStaffScope, withTenant, type Tx } from "../db";
+import type { PlatformPermissionKey } from "@/config/platform";
+import { assertOnTenant, assertRole, loadPlatformScope, resolveTarget, type PlatformScope, type PlatformTarget } from "../core/platform-scope";
 import { authenticate, readCookie, SESSION_COOKIE, type AuthedSession, type SessionUser } from "../auth/session";
 import { rateLimit } from "../auth/ratelimit";
 import {
@@ -18,7 +20,13 @@ export type Method = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
  *
  *  public   - no session (QR menu, public invoice, ID verification, webhooks)
  *  session  - any signed-in user; the handler opens its own scope
- *  platform - SAF Super Admin only; handler runs in a cross-tenant transaction
+ *  platform - SAF Team member whose platform role grants the permission(s).
+ *             Roles with all_tenants run cross-tenant (RLS bypass); other
+ *             roles run in the staff scope, where RLS exposes only assigned
+ *             businesses. `target` names the business the route acts on so
+ *             per-assignment permission and module limits apply too.
+ *             `elevated` (business creation only) runs cross-tenant after the
+ *             permission check; the handler must assign the new business.
  *  product  - tenant user of a SAF product. Checks, in order: tenant active,
  *             product subscribed, subscription usable, user has a role in the
  *             product, plan entitles the feature, role grants the permission.
@@ -27,7 +35,12 @@ export type Method = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 export type Policy =
   | { public: true }
   | { session: true; allowPasswordChange?: boolean }
-  | { platform: true }
+  | {
+      /** Any-of platform permission keys. */
+      platform: PlatformPermissionKey | readonly PlatformPermissionKey[];
+      target?: PlatformTarget;
+      elevated?: boolean;
+    }
   | {
       product: ProductCode | ":product";
       /** Any-of; relative ("kds") or qualified ("dine.kds"). */
@@ -48,6 +61,8 @@ export interface Ctx<B = any, Q = any> {
   userAgent: string;
   session: AuthedSession | null;
   user: SessionUser;
+  /** Set on platform routes. */
+  platform: PlatformScope;
   db: Tx;
   tenantId: string;
   product: ProductCode;
@@ -148,7 +163,7 @@ export function json(status: number, data: unknown, headers?: Headers): Response
   return new Response(JSON.stringify(data, jsonReplacer), { status, headers: h });
 }
 
-const DENIAL_CODES = new Set(["FEATURE_NOT_IN_PLAN", "PERMISSION_DENIED", "PLATFORM_ONLY", "PRODUCT_ACCESS_DENIED", "PRODUCT_NOT_SUBSCRIBED"]);
+const DENIAL_CODES = new Set(["FEATURE_NOT_IN_PLAN", "PERMISSION_DENIED", "PLATFORM_ONLY", "PLATFORM_PERMISSION_DENIED", "BRANCH_ACCESS_DENIED", "PRODUCT_ACCESS_DENIED", "PRODUCT_NOT_SUBSCRIBED"]);
 
 export async function handleRequest(req: Request): Promise<Response> {
   const url = new URL(req.url);
@@ -246,9 +261,22 @@ async function runWithPolicy(def: RouteDef, ctx: Ctx & { _audited?: boolean }) {
   if ("session" in auth) return def.handler(ctx);
 
   if ("platform" in auth) {
-    if (session.user.kind !== "PLATFORM") throw forbidden("PLATFORM_ONLY", "Only SMARTAUTO FLEX administrators can do this.");
-    return withPlatform(async (db) => {
+    if (session.user.kind !== "PLATFORM") throw forbidden("PLATFORM_ONLY", "Only SmartAutoFlex team members can do this.");
+    const scope = await loadPlatformScope(session.user);
+    const need = (typeof auth.platform === "string" ? [auth.platform] : [...auth.platform]) as string[];
+    assertRole(scope, need);
+    ctx.platform = scope;
+    const run = scope.allTenants || auth.elevated
+      ? <T>(fn: (db: Tx) => Promise<T>) => withPlatform(fn)
+      : <T>(fn: (db: Tx) => Promise<T>) => withStaffScope(scope.userId, fn);
+    return run(async (db) => {
       ctx.db = db;
+      if (auth.target) {
+        const t = await resolveTarget(db, auth.target, ctx.params, ctx.body);
+        if (!t) throw notFound();
+        assertOnTenant(scope, need, t.tenantId, t.product);
+        ctx.tenantId = t.tenantId;
+      }
       const r = await def.handler(ctx);
       await autoAudit(def, ctx);
       return r;
@@ -286,6 +314,14 @@ async function runWithPolicy(def: RouteDef, ctx: Ctx & { _audited?: boolean }) {
 }
 
 function resolveBranch(access: ProductAccess, requested: string | null): string {
+  if (access.branchRestricted) {
+    // Branch-restricted staff: only their granted branches, never a fallback.
+    if (!access.branches.length) throw forbidden("BRANCH_ACCESS_DENIED", "Your account is not assigned to any active branch.");
+    if (!requested) return (access.branches.find((b) => b.isMain) ?? access.branches[0]).id;
+    if (!access.branches.some((b) => b.id === requested))
+      throw forbidden("BRANCH_ACCESS_DENIED", "Your account does not have access to this branch.");
+    return requested;
+  }
   const main = access.branches.find((b) => b.isMain) ?? access.branches[0];
   if (requested) {
     const b = access.branches.find((x) => x.id === requested);

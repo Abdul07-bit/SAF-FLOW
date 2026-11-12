@@ -4,6 +4,7 @@
  */
 import "./routes/auth";
 import "./routes/admin";
+import "./routes/team";
 import "./routes/tenant";
 import "./routes/staff";
 import "./routes/dine";

@@ -152,7 +152,11 @@ describe("API authorisation policy (lint)", () => {
       "GET /public/invoice/dine/:token",
       "GET /public/invoice/stay/:token",
       "GET /public/verify/:token",
+      // Email identity: invite / reset link handling and reset requests (rate limited, tokens verified with Supabase)
+      "POST /auth/link/complete",
+      "POST /auth/link/inspect",
       "POST /auth/login",
+      "POST /auth/password-reset",
       "POST /jobs/renewals",
       "POST /public/dine/menu/:qrToken/order",
       "POST /webhooks/razorpay",

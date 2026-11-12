@@ -1,3 +1,4 @@
+import type { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { PRODUCTS, isProductCode } from "@/config/catalog";
 import { route } from "../http/router";
@@ -6,6 +7,7 @@ import { withPlatform, withTenant, type Tx } from "../db";
 import { burnPasswordCheck, hashPassword, passwordPolicyError, verifyPassword } from "../auth/password";
 import { createSession, revokeSession, revokeUserSessions, sessionCookie, type SessionUser } from "../auth/session";
 import { rateLimit } from "../auth/ratelimit";
+import { authCallbackUrl, identity, IdentityError, identityToHttp, looksLikeEmail } from "../auth/identity";
 import { normalizeUsername } from "../core/ids";
 import { writeAudit } from "../core/audit";
 import { loadPortal, loadProductAccess, type ProductAccess } from "../core/access";
@@ -13,7 +15,7 @@ import { getProductSettings } from "../core/settings";
 import { fileUrl } from "../core/storage";
 
 const loginBody = z.object({
-  username: z.string().trim().min(3).max(80),
+  username: z.string().trim().min(3).max(200),
   password: z.string().min(1).max(200),
 });
 
@@ -21,55 +23,102 @@ type LoginOutcome =
   | { ok: true; token: string; expiresAt: Date; user: { id: string; username: string; fullName: string; kind: string; mustChangePassword: boolean } }
   | { ok: false; error: HttpError };
 
-const invalid = () => new HttpError(401, "INVALID_CREDENTIALS", "Incorrect login ID or password.");
+const invalid = () => new HttpError(401, "INVALID_CREDENTIALS", "Incorrect email / login ID or password.");
+
+// ---------------------------------------------------------------------------
+// Sign-in
+//
+// Two kinds of account share one login form:
+//  - email accounts (owners, managers, SAF Team): password checked by
+//    Supabase Auth; users.auth_user_id links the identity.
+//  - login-ID accounts (CODE@name, floor staff): local argon2 password.
+// Either way SAF issues its own httpOnly session; lockout, suspension and
+// audit are enforced here for both.
+// ---------------------------------------------------------------------------
+
+type Account = Prisma.UserGetPayload<{ include: { invitations: { where: { status: "PENDING" } } } }>;
+
+async function findAccount(db: Tx, raw: string): Promise<Account | null> {
+  const include = { invitations: { where: { status: "PENDING" as const } } };
+  if (looksLikeEmail(raw)) {
+    const byEmail = await db.user.findFirst({
+      where: { authUserId: { not: null }, email: { equals: raw.trim(), mode: "insensitive" } }, include,
+    });
+    if (byEmail) return byEmail;
+  }
+  return db.user.findUnique({ where: { username: normalizeUsername(raw) }, include });
+}
+
+function accountKey(raw: string) {
+  return looksLikeEmail(raw) ? raw.trim().toLowerCase() : normalizeUsername(raw);
+}
 
 route({
-  method: "POST", path: "/auth/login", tag: "auth", summary: "Sign in with login ID and password",
+  method: "POST", path: "/auth/login", tag: "auth", summary: "Sign in with email or login ID and password",
   auth: { public: true }, body: loginBody, rateLimit: { limit: 20, windowMs: 60_000 },
   handler: async (ctx) => {
-    const username = normalizeUsername(ctx.body.username);
-    const perAccount = rateLimit(`login:${username}`, 15, 15 * 60_000);
+    const raw = ctx.body.username.trim();
+    const perAccount = rateLimit(`login:${accountKey(raw)}`, 15, 15 * 60_000);
     if (!perAccount.ok) throw new HttpError(429, "RATE_LIMITED", "Too many sign-in attempts for this account. Please wait.");
 
     const maxFailures = Number(process.env.LOGIN_MAX_FAILURES || 5);
     const lockMinutes = Number(process.env.LOGIN_LOCK_MINUTES || 15);
     const meta = { ip: ctx.ip, userAgent: ctx.userAgent };
 
-    // Failures are committed before the error is returned (no rollback on throw).
+    // 1. Resolve the account and refuse locked ones before any password check.
+    const user = await withPlatform(async (db) => {
+      const u = await findAccount(db, raw);
+      if (!u) await writeAudit(db, { action: "auth.login_failed", ...meta, meta: { username: accountKey(raw), reason: "unknown_user" } });
+      return u;
+    });
+    if (!user) {
+      await burnPasswordCheck(ctx.body.password);
+      throw invalid();
+    }
+    const now = new Date();
+    if (user.lockedUntil && user.lockedUntil > now) {
+      const mins = Math.ceil((user.lockedUntil.getTime() - now.getTime()) / 60_000);
+      throw new HttpError(423, "ACCOUNT_LOCKED", `Account locked after repeated failed attempts. Try again in ${mins} minute(s).`);
+    }
+    if (user.authUserId && user.invitations.length && !user.isActive)
+      throw new HttpError(403, "INVITATION_PENDING", "Please open the invitation email and set your password first.");
+
+    // 2. Verify the credential (outside any transaction: may call Supabase).
+    let ok = false;
+    if (user.authUserId) {
+      const r = await identity().signInWithPassword(user.email!, ctx.body.password).catch((e) => {
+        if (e instanceof IdentityError) throw new HttpError(e.status, e.code, e.message);
+        throw e;
+      });
+      ok = !!r && r.user.id === user.authUserId;
+    } else if (user.passwordHash) {
+      ok = await verifyPassword(user.passwordHash, ctx.body.password);
+    } else {
+      await burnPasswordCheck(ctx.body.password);
+    }
+
+    // 3. Record the outcome.
     const outcome = await withPlatform<LoginOutcome>(async (db) => {
-      const user = await db.user.findUnique({ where: { username } });
-      if (!user) {
-        await burnPasswordCheck(ctx.body.password);
-        await writeAudit(db, { action: "auth.login_failed", ...meta, meta: { username, reason: "unknown_user" } });
-        return { ok: false, error: invalid() };
-      }
-      const now = new Date();
-      if (user.lockedUntil && user.lockedUntil > now) {
-        const mins = Math.ceil((user.lockedUntil.getTime() - now.getTime()) / 60_000);
-        return { ok: false, error: new HttpError(423, "ACCOUNT_LOCKED", `Account locked after repeated failed attempts. Try again in ${mins} minute(s).`) };
-      }
-      if (!(await verifyPassword(user.passwordHash, ctx.body.password))) {
-        const failures = user.failedLoginCount + 1;
+      if (!ok) {
+        const fresh = await db.user.findUniqueOrThrow({ where: { id: user.id } });
+        const failures = fresh.failedLoginCount + 1;
         const lock = failures >= maxFailures;
         await db.user.update({
           where: { id: user.id },
-          data: lock
-            ? { failedLoginCount: 0, lockedUntil: new Date(now.getTime() + lockMinutes * 60_000) }
-            : { failedLoginCount: failures },
+          data: lock ? { failedLoginCount: 0, lockedUntil: new Date(now.getTime() + lockMinutes * 60_000) } : { failedLoginCount: failures },
         });
         await writeAudit(db, {
-          tenantId: user.tenantId, actor: user, action: lock ? "auth.account_locked" : "auth.login_failed", ...meta,
-          meta: { failures },
+          tenantId: user.tenantId, actor: user, action: lock ? "auth.account_locked" : "auth.login_failed", ...meta, meta: { failures },
         });
         return { ok: false, error: invalid() };
       }
       if (!user.isActive) {
         await writeAudit(db, { tenantId: user.tenantId, actor: user, action: "auth.login_disabled", ...meta });
-        return { ok: false, error: new HttpError(403, "ACCOUNT_DISABLED", "This account has been disabled. Contact your manager.") };
+        return { ok: false, error: new HttpError(403, "ACCOUNT_DISABLED", "This account has been disabled. Contact your administrator.") };
       }
       const session = await createSession(db, user.id, user.tenantId, meta);
       await db.user.update({ where: { id: user.id }, data: { failedLoginCount: 0, lockedUntil: null, lastLoginAt: now } });
-      await writeAudit(db, { tenantId: user.tenantId, actor: user, action: "auth.login", ...meta });
+      await writeAudit(db, { tenantId: user.tenantId, actor: user, action: "auth.login", ...meta, meta: { method: user.authUserId ? "email" : "login_id" } });
       return {
         ok: true, token: session.token, expiresAt: session.expiresAt,
         user: { id: user.id, username: user.username, fullName: user.fullName, kind: user.kind, mustChangePassword: user.mustChangePassword },
@@ -101,6 +150,19 @@ route({
 });
 
 route({
+  method: "POST", path: "/auth/logout-all", tag: "auth", summary: "Sign out of every device (revokes all sessions)",
+  auth: { session: true, allowPasswordChange: true },
+  handler: async (ctx) => {
+    await withPlatform(async (db) => {
+      await revokeUserSessions(db, ctx.user.id);
+      await writeAudit(db, { tenantId: ctx.user.tenantId, actor: ctx.user, action: "auth.logout_all", ip: ctx.ip });
+    });
+    ctx.headers.append("set-cookie", sessionCookie("", 0));
+    return { ok: true };
+  },
+});
+
+route({
   method: "POST", path: "/auth/change-password", tag: "auth",
   summary: "Change own password (required after first login with a temporary password)",
   auth: { session: true, allowPasswordChange: true },
@@ -108,16 +170,26 @@ route({
   rateLimit: { limit: 10, windowMs: 60_000 },
   handler: async (ctx) => {
     const { currentPassword, newPassword } = ctx.body;
-    const policy = passwordPolicyError(newPassword, ctx.user.username);
+    const user = await withPlatform((db) => db.user.findUniqueOrThrow({ where: { id: ctx.user.id } }));
+    const policy = passwordPolicyError(newPassword, user.authUserId ? undefined : ctx.user.username);
     if (policy) throw badRequest(policy);
     if (currentPassword === newPassword) throw badRequest("New password must be different from the current one.");
+
+    if (user.authUserId) {
+      const signedIn = await identity().signInWithPassword(user.email!, currentPassword).catch(asHttp);
+      if (!signedIn || signedIn.user.id !== user.authUserId) throw new HttpError(400, "WRONG_PASSWORD", "Current password is incorrect.");
+      await identity().updatePassword(signedIn.accessToken, newPassword).catch(asHttp);
+    } else if (!user.passwordHash || !(await verifyPassword(user.passwordHash, currentPassword))) {
+      throw new HttpError(400, "WRONG_PASSWORD", "Current password is incorrect.");
+    }
+
     await withPlatform(async (db) => {
-      const user = await db.user.findUniqueOrThrow({ where: { id: ctx.user.id } });
-      if (!(await verifyPassword(user.passwordHash, currentPassword)))
-        throw new HttpError(400, "WRONG_PASSWORD", "Current password is incorrect.");
       await db.user.update({
         where: { id: user.id },
-        data: { passwordHash: await hashPassword(newPassword), mustChangePassword: false, passwordChangedAt: new Date() },
+        data: {
+          ...(user.authUserId ? {} : { passwordHash: await hashPassword(newPassword) }),
+          mustChangePassword: false, passwordChangedAt: new Date(),
+        },
       });
       await revokeUserSessions(db, user.id, ctx.session!.id);
       await writeAudit(db, { tenantId: user.tenantId, actor: user, action: "auth.password_changed", ip: ctx.ip });
@@ -125,6 +197,117 @@ route({
     return { ok: true, redirect: ctx.user.kind === "PLATFORM" ? "/admin" : "/" };
   },
 });
+
+const asHttp = identityToHttp;
+
+// ---------------------------------------------------------------------------
+// Password reset and invitation links (email accounts)
+//
+// Supabase emails a link to /auth/callback carrying an access token in the
+// URL fragment. The page posts that token here; the server verifies it with
+// Supabase, finds the linked SAF account, sets the password through Supabase
+// and issues a SAF session. Tokens never reach SAF's database or logs.
+// ---------------------------------------------------------------------------
+
+route({
+  method: "POST", path: "/auth/password-reset", tag: "auth",
+  summary: "Email a password-reset link (email accounts). Always answers the same way.",
+  auth: { public: true }, rateLimit: { limit: 5, windowMs: 60_000 },
+  body: z.object({ email: z.string().trim().max(200) }),
+  handler: async (ctx) => {
+    const email = ctx.body.email.toLowerCase();
+    const generic = {
+      ok: true,
+      message: "If an account exists for this email, a reset link is on its way. Staff who sign in with a login ID should ask their manager.",
+    };
+    if (!looksLikeEmail(email) || !rateLimit(`reset:${email}`, 3, 60 * 60_000).ok) return generic;
+    const user = await withPlatform((db) =>
+      db.user.findFirst({ where: { authUserId: { not: null }, email: { equals: email, mode: "insensitive" } } }),
+    );
+    if (!user || !user.isActive) return generic;
+    try {
+      await identity().sendRecovery(user.email!, authCallbackUrl());
+      await withPlatform((db) => writeAudit(db, { tenantId: user.tenantId, actor: user, action: "auth.password_reset_requested", ip: ctx.ip }));
+    } catch (e) {
+      // Do not reveal whether the account exists; the failure is logged.
+      console.error("[auth] password reset email failed", e);
+    }
+    return generic;
+  },
+});
+
+const linkBody = z.object({ accessToken: z.string().min(20).max(4000) });
+
+async function linkedAccount(accessToken: string) {
+  const idUser = await identity().getUser(accessToken).catch(asHttp);
+  if (!idUser) throw new HttpError(400, "LINK_INVALID", "This link is invalid or has expired. Ask for a new one.");
+  const user = await withPlatform((db) =>
+    db.user.findUnique({
+      where: { authUserId: idUser.id },
+      include: {
+        invitations: { where: { status: "PENDING" }, orderBy: { sentAt: "desc" }, take: 1 },
+        tenant: { include: { business: { select: { name: true } } } },
+      },
+    }),
+  );
+  if (!user) throw new HttpError(404, "NO_ACCOUNT", "No SAF Flow account is linked to this email.");
+  const invitation = user.invitations[0] ?? null;
+  return { user, invitation, purpose: invitation ? ("invite" as const) : ("recovery" as const) };
+}
+
+route({
+  method: "POST", path: "/auth/link/inspect", tag: "auth",
+  summary: "Describe an invitation / reset link before the user sets a password",
+  auth: { public: true }, body: linkBody, rateLimit: { limit: 30, windowMs: 60_000 },
+  handler: async (ctx) => {
+    const { user, invitation, purpose } = await linkedAccount(ctx.body.accessToken);
+    if (invitation && invitation.expiresAt < new Date())
+      throw new HttpError(410, "INVITATION_EXPIRED", "This invitation has expired. Ask for a new one.");
+    if (!invitation && !user.isActive) throw new HttpError(403, "ACCOUNT_DISABLED", "This account has been disabled.");
+    return {
+      purpose, email: user.email, fullName: user.fullName,
+      organization: user.tenant?.business?.name ?? (user.kind === "PLATFORM" ? "SmartAutoFlex" : null),
+    };
+  },
+});
+
+route({
+  method: "POST", path: "/auth/link/complete", tag: "auth",
+  summary: "Set a password from an invitation / reset link and sign in",
+  auth: { public: true }, rateLimit: { limit: 10, windowMs: 60_000 },
+  body: linkBody.extend({ password: z.string().min(1).max(200) }),
+  handler: async (ctx) => {
+    const { user, invitation, purpose } = await linkedAccount(ctx.body.accessToken);
+    if (invitation && invitation.expiresAt < new Date())
+      throw new HttpError(410, "INVITATION_EXPIRED", "This invitation has expired. Ask for a new one.");
+    if (!invitation && !user.isActive) throw new HttpError(403, "ACCOUNT_DISABLED", "This account has been disabled.");
+    const policy = passwordPolicyError(ctx.body.password);
+    if (policy) throw badRequest(policy);
+
+    await identity().updatePassword(ctx.body.accessToken, ctx.body.password).catch(asHttp);
+
+    const meta = { ip: ctx.ip, userAgent: ctx.userAgent };
+    const session = await withPlatform(async (db) => {
+      if (invitation) {
+        await db.invitation.update({ where: { id: invitation.id }, data: { status: "ACCEPTED", acceptedAt: new Date() } });
+        await db.user.update({ where: { id: user.id }, data: { isActive: true } });
+      }
+      await revokeUserSessions(db, user.id);
+      await db.user.update({
+        where: { id: user.id },
+        data: { mustChangePassword: false, passwordChangedAt: new Date(), failedLoginCount: 0, lockedUntil: null, lastLoginAt: new Date() },
+      });
+      await writeAudit(db, {
+        tenantId: user.tenantId, actor: user, ...meta,
+        action: purpose === "invite" ? "auth.invitation_accepted" : "auth.password_reset_completed",
+      });
+      return createSession(db, user.id, user.tenantId, meta);
+    });
+    ctx.headers.append("set-cookie", sessionCookie(session.token, Math.floor((session.expiresAt.getTime() - Date.now()) / 1000)));
+    return { ok: true, purpose, redirect: user.kind === "PLATFORM" ? "/admin" : "/" };
+  },
+});
+
 
 // ---------------------------------------------------------------------------
 // Identity, portal and product context

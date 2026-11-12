@@ -35,7 +35,7 @@ export default function LoginPage() {
       <section className="relative hidden flex-col justify-between bg-sidebar p-10 text-white lg:flex">
         <div className="flex items-center gap-3">
           <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-white/15 text-sm font-bold">SAF</span>
-          <span className="text-lg font-semibold tracking-tight">SMARTAUTO FLEX</span>
+          <span className="text-lg font-semibold tracking-tight">SAF Flow</span>
         </div>
         <div>
           <h1 className="max-w-md text-3xl font-semibold leading-tight tracking-tight">One account for your restaurant, hotel and shop.</h1>
@@ -62,13 +62,13 @@ export default function LoginPage() {
         <form onSubmit={submit} className="w-full max-w-sm">
           <div className="mb-6 flex items-center gap-2 lg:hidden">
             <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-brand text-xs font-bold text-brand-ink">SAF</span>
-            <span className="text-base font-semibold">SMARTAUTO FLEX</span>
+            <span className="text-base font-semibold">SAF Flow</span>
           </div>
           <h2 className="text-2xl font-semibold tracking-tight text-slate-900">Sign in</h2>
-          <p className="mt-1 text-sm text-slate-600">Use the login ID given by your manager, for example <span className="font-medium text-slate-800">SGV@manager</span>.</p>
+          <p className="mt-1 text-sm text-slate-600">Use your email address, or the login ID your manager gave you (for example <span className="font-medium text-slate-800">SGV@ravi</span>).</p>
           <div className="mt-6 space-y-4">
-            <Field label="Login ID" required>
-              <Input name="username" autoComplete="username" autoCapitalize="none" spellCheck={false} autoFocus required value={username} onChange={(e) => setUsername(e.target.value)} placeholder="BUSINESSCODE@name" />
+            <Field label="Email or login ID" required>
+              <Input name="username" autoComplete="username" autoCapitalize="none" spellCheck={false} autoFocus required value={username} onChange={(e) => setUsername(e.target.value)} placeholder="you@business.com or CODE@name" />
             </Field>
             <Field label="Password" required>
               <Input name="password" type="password" autoComplete="current-password" required value={password} onChange={(e) => setPassword(e.target.value)} />
@@ -76,7 +76,8 @@ export default function LoginPage() {
             {error && <Notice tone="bad">{error}</Notice>}
             <Button type="submit" variant="primary" size="lg" className="w-full" loading={busy}>Sign in</Button>
           </div>
-          <p className="mt-6 text-xs text-slate-500">Forgot your password? Ask your manager to reset it. Managers can contact SMARTAUTO FLEX support.</p>
+          <p className="mt-6 text-sm"><a href="/forgot-password" className="font-medium text-brand hover:underline">Forgot your password?</a></p>
+          <p className="mt-1 text-xs text-slate-500">Staff who sign in with a login ID: ask your manager to reset it.</p>
         </form>
       </main>
     </div>

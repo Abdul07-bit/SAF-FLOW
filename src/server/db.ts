@@ -41,6 +41,19 @@ export async function withPlatform<T>(fn: (tx: Tx) => Promise<T>): Promise<T> {
   }, TX_OPTS);
 }
 
+/**
+ * Scoped SAF Team transaction: RLS exposes only the businesses this member is
+ * actively assigned to (see the saf_flow_foundation migration). Used for
+ * platform routes when the member's role does not have all_tenants.
+ */
+export async function withStaffScope<T>(staffUserId: string, fn: (tx: Tx) => Promise<T>): Promise<T> {
+  if (!isUuid(staffUserId)) throw new Error("withStaffScope: invalid user id");
+  return prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT set_config('app.staff_user_id', ${staffUserId}, true)`;
+    return fn(tx);
+  }, TX_OPTS);
+}
+
 /** Atomic per-tenant document counter (order no., invoice no., ...). */
 export async function nextSeq(db: Tx, tenantId: string | null, key: string): Promise<number> {
   const scope = tenantId ? `${tenantId}:${key}` : `platform:${key}`;
