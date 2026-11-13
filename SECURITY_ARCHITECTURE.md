@@ -17,7 +17,7 @@ Browser ── HTTPS ──> nginx (TLS, limit_req, overwrites X-Forwarded-For)
                                                    8 automatic audit entry for every mutation (with request id)
 ```
 
-Every route **must** declare exactly one policy (`router.ts`, type `Policy`). There's no default, so an endpoint can't be exposed by forgetting an annotation. A test checks all 221 routes for anonymous access and CSRF.
+Every route **must** declare exactly one policy (`router.ts`, type `Policy`). There's no default, so an endpoint can't be exposed by forgetting an annotation. A test checks all 318 endpoints for anonymous access and CSRF.
 
 ## 2. Tenant isolation (defence in depth)
 

@@ -11,6 +11,7 @@
  * read from the server environment only and never sent to a browser.
  */
 
+import { logError } from "../core/log";
 import { HttpError } from "../http/errors";
 
 export class IdentityError extends Error {
@@ -75,7 +76,7 @@ async function call(path: string, init: { method: string; key: "publishable" | "
       signal: AbortSignal.timeout(15_000),
     });
   } catch (err) {
-    console.error("[identity] Supabase Auth unreachable", err);
+    logError("identity", "Supabase Auth unreachable", err);
     throw new IdentityError("IDENTITY_UNAVAILABLE", "The sign-in service is temporarily unreachable. Please try again.", 503);
   }
   const text = await res.text();
@@ -100,10 +101,10 @@ function fail(status: number, body: any, fallback: string): never {
   if (code === "over_email_send_rate_limit" || status === 429)
     throw new IdentityError("EMAIL_RATE_LIMITED", "Too many emails were sent recently. Please wait and try again.", 429);
   if (status === 401 || status === 403) {
-    console.error("[identity] Supabase rejected the server key", status, body);
+    logError("identity", "Supabase rejected the server key", status, body);
     throw new IdentityError("IDENTITY_NOT_CONFIGURED", "The sign-in service rejected this server's credentials.", 503);
   }
-  console.error("[identity] Supabase Auth error", status, body);
+  logError("identity", "Supabase Auth error", status, body);
   throw new IdentityError("IDENTITY_ERROR", fallback, 502);
 }
 

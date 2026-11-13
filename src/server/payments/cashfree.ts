@@ -1,4 +1,5 @@
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import { logError } from "../core/log";
 import { HttpError } from "../http/errors";
 
 /**
@@ -43,12 +44,12 @@ async function call(path: string, init: { method: "GET" | "POST"; body?: unknown
     signal: AbortSignal.timeout(15_000),
     cache: "no-store",
   }).catch((e) => {
-    console.error("[cashfree] request failed", path, e);
+    logError("cashfree", "request failed", path, e);
     throw new HttpError(502, "PAYMENT_GATEWAY_ERROR", "Could not reach the payment gateway. Please try again.");
   });
   const body = await res.json().catch(() => null);
   if (!res.ok) {
-    console.error("[cashfree] error", res.status, path, body);
+    logError("cashfree", "error", res.status, path, body);
     throw new HttpError(502, "PAYMENT_GATEWAY_ERROR", "The payment gateway could not process this request. Please try again.");
   }
   return body;

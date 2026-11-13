@@ -1,11 +1,13 @@
 import { Prisma } from "@prisma/client";
-import { ZodError, type ZodType } from "zod";
+import { logError } from "../core/log";
+import { ZodError, ZodObject, ZodPipe, type ZodType } from "zod";
 import { isProductCode, type ProductCode } from "@/config/catalog";
 import { withPlatform, withStaffScope, withTenant, type Tx } from "../db";
 import type { PlatformPermissionKey } from "@/config/platform";
 import { assertOnTenant, assertRole, loadPlatformScope, resolveTarget, type PlatformScope, type PlatformTarget } from "../core/platform-scope";
 import { authenticate, readCookie, SESSION_COOKIE, type AuthedSession, type SessionUser } from "../auth/session";
-import { rateLimit } from "../auth/ratelimit";
+import { rateLimit, shouldLogLimit } from "../auth/ratelimit";
+import { isUuid } from "../db";
 import {
   assertFeature, assertPermission, assertProductUsable, hasAny, loadProductAccess, qualify, type ProductAccess,
 } from "../core/access";
@@ -81,6 +83,8 @@ export interface Ctx<B = any, Q = any> {
   branchId: string;
   status: number;
   headers: Headers;
+  /** Throws 429 (and logs it) when `key` exceeded `limit` hits in `windowMs`. Use for per-email / per-account / per-table limits. */
+  limit(name: string, key: string, limit: number, windowMs: number): Promise<void>;
   can(permission: string | readonly string[]): boolean;
   has(feature: string | readonly string[]): boolean;
   require(opts: { permission?: string | readonly string[]; feature?: string | readonly string[] }): void;
@@ -102,7 +106,13 @@ export interface RouteDef<B = any, Q = any> {
   multipart?: boolean;
   /** Raw body (webhooks): handler reads ctx.req itself. */
   rawBody?: boolean;
-  rateLimit?: { limit: number; windowMs: number };
+  /**
+   * Extra limits for this route, on top of the general ones. `by: "ip"`
+   * (default) counts per client address before authentication; `by: "user"`
+   * counts per signed-in account. Counters are shared across server instances
+   * when Upstash Redis is configured (see auth/ratelimit.ts).
+   */
+  rateLimit?: RouteLimit | RouteLimit[];
   /**
    * Sensitive action: requires a fresh authentication (sign-in, MFA, or
    * POST /auth/step-up) within STEP_UP_WINDOW_MINUTES (default 10).
@@ -111,6 +121,12 @@ export interface RouteDef<B = any, Q = any> {
   /** Audit action name for mutations; false disables the automatic entry. */
   audit?: string | false;
   handler: (ctx: Ctx<B, Q>) => Promise<unknown> | unknown;
+}
+
+export interface RouteLimit {
+  limit: number;
+  windowMs: number;
+  by?: "ip" | "user";
 }
 
 interface Compiled {
@@ -242,16 +258,19 @@ export async function handleRequest(req: Request): Promise<Response> {
     session: null, status: 200, headers,
   } as unknown as Ctx & { _audited?: boolean };
 
+  ctx.limit = async (name, key, limit, windowMs) => {
+    const r = await rateLimit(`${name}:${key}`, limit, windowMs);
+    if (r.ok) return;
+    headers.set("retry-after", String(r.retryAfterSec));
+    await logRateLimited(ctx, def, name, `${name}:${key}`, windowMs);
+    throw new HttpError(429, "RATE_LIMITED", "Too many attempts. Please wait a little and try again.");
+  };
+
   try {
-    const global = rateLimit(`ip:${ip}`, Number(process.env.API_RATE_LIMIT_PER_MIN || 1200), 60_000);
-    if (!global.ok) throw new HttpError(429, "RATE_LIMITED", "Too many requests. Please slow down.");
-    if (def.rateLimit) {
-      const rl = rateLimit(`${def.method}:${def.path}:${ip}`, def.rateLimit.limit, def.rateLimit.windowMs);
-      if (!rl.ok) {
-        headers.set("retry-after", String(rl.retryAfterSec));
-        throw new HttpError(429, "RATE_LIMITED", "Too many attempts. Please wait and try again.");
-      }
-    }
+    // 1. Per client address: everything, then this route's own IP limits.
+    await ctx.limit("ip", ip, Number(process.env.API_RATE_LIMIT_PER_MIN || 1200), 60_000);
+    for (const l of routeLimits(def).filter((x) => (x.by ?? "ip") === "ip"))
+      await ctx.limit(`route-ip:${def.method} ${def.path}`, ip, l.limit, l.windowMs);
 
     // Anonymous callers of protected routes are turned away before any input
     // validation runs, so they learn nothing about the expected payloads.
@@ -263,7 +282,12 @@ export async function handleRequest(req: Request): Promise<Response> {
     if (mutating && !("public" in def.auth) && req.headers.get("x-saf-request") !== "1")
       throw forbidden("CSRF_REJECTED", "Request rejected: missing x-saf-request header.");
 
+    // ID parameters must be UUIDs: anything else cannot exist, so stop here.
+    for (const [k, v] of Object.entries(m.params))
+      if (UUID_PARAMS.has(k) && !isUuid(v)) throw notFound();
+
     const rawQuery = Object.fromEntries(url.searchParams);
+    if (def.query) rejectUnknownQuery(def.query, rawQuery);
     ctx.query = def.query ? def.query.parse(rawQuery) : rawQuery;
     if (mutating && !def.rawBody) {
       if (def.multipart) {
@@ -283,7 +307,17 @@ export async function handleRequest(req: Request): Promise<Response> {
             throw new HttpError(400, "INVALID_JSON", "Request body must be valid JSON.");
           }
         }
-        ctx.body = def.body ? def.body.parse(parsed) : parsed;
+        if (def.body) {
+          ctx.body = def.body.parse(parsed);
+          // Zod drops unknown keys silently; the API refuses them instead.
+          const extra = unknownKeys(parsed, ctx.body);
+          if (extra.length)
+            throw new HttpError(400, "UNKNOWN_FIELDS", `Unexpected field(s): ${extra.slice(0, 10).join(", ")}.`, { fields: extra.slice(0, 50) });
+        } else if (text && parsed && typeof parsed === "object" && Object.keys(parsed).length) {
+          throw new HttpError(400, "UNKNOWN_FIELDS", "This request does not take a body.");
+        } else {
+          ctx.body = parsed;
+        }
       }
     }
 
@@ -319,6 +353,12 @@ async function runWithPolicy(def: RouteDef, ctx: Ctx & { _audited?: boolean }) {
     throw forbidden("MFA_ENROLLMENT_REQUIRED", "Your account must use two-step verification. Please set it up to continue.");
   if (def.stepUp && (!session.stepUpAt || Date.now() - session.stepUpAt.getTime() > stepUpWindowMs()))
     throw forbidden("STEP_UP_REQUIRED", "Please confirm it is you to continue with this action.");
+
+  // 2. Per signed-in user: general read / write budgets, then this route's own user limits.
+  const reading = def.method === "GET";
+  await ctx.limit(reading ? "user-read" : "user-write", session.user.id, reading ? 600 : 120, 60_000);
+  for (const l of routeLimits(def).filter((x) => x.by === "user"))
+    await ctx.limit(`route-user:${def.method} ${def.path}`, session.user.id, l.limit, l.windowMs);
 
   ctx.audit = async (action, entity, meta) => {
     ctx._audited = true;
@@ -407,6 +447,69 @@ function resolveBranch(access: ProductAccess, requested: string | null): string 
   return main?.id ?? "";
 }
 
+/** Error codes whose `details` the user interface needs. */
+const PUBLIC_DETAIL_CODES = new Set(["VALIDATION_ERROR", "UNKNOWN_FIELDS", "BALANCE_DUE"]);
+
+/** Unique-constraint fields that are safe and useful to name to a user. */
+const FRIENDLY_FIELDS: Record<string, string> = {
+  code: "code", username: "login ID", email: "email", phone: "phone number", name: "name", barcode: "barcode", sku: "SKU",
+  number: "number", employeeCode: "employee ID", employee_code: "employee ID", invoiceNo: "invoice number", invoice_no: "invoice number",
+  cardNumber: "card number", card_number: "card number",
+};
+
+/** Path parameters that hold record ids. */
+const UUID_PARAMS = new Set(["id", "userId", "tenantId", "productId"]);
+
+function routeLimits(def: RouteDef): RouteLimit[] {
+  return def.rateLimit ? (Array.isArray(def.rateLimit) ? def.rateLimit : [def.rateLimit]) : [];
+}
+
+/** Keys present in the request but dropped by the schema (nested objects and arrays included). */
+export function unknownKeys(input: unknown, output: unknown, path = ""): string[] {
+  if (Array.isArray(input) && Array.isArray(output))
+    return input.flatMap((v, i) => unknownKeys(v, output[i], `${path}[${i}]`));
+  if (!isPlainObject(input) || !isPlainObject(output)) return [];
+  const out: string[] = [];
+  for (const k of Object.keys(input)) {
+    const p = path ? `${path}.${k}` : k;
+    if (!(k in output)) {
+      if (input[k] !== undefined) out.push(p);
+    } else out.push(...unknownKeys(input[k], output[k], p));
+  }
+  return out;
+}
+
+function isPlainObject(v: unknown): v is Record<string, unknown> {
+  return !!v && typeof v === "object" && !Array.isArray(v) && Object.getPrototypeOf(v) === Object.prototype;
+}
+
+/** Query strings: only the parameters the route's schema declares are accepted. */
+function rejectUnknownQuery(schema: ZodType, raw: Record<string, string>) {
+  let obj: unknown = schema;
+  if (obj instanceof ZodPipe) obj = (obj as ZodPipe).in;
+  if (!(obj instanceof ZodObject)) return;
+  const allowed = new Set(Object.keys((obj as ZodObject).shape));
+  const extra = Object.keys(raw).filter((k) => !allowed.has(k));
+  if (extra.length) throw new HttpError(400, "UNKNOWN_FIELDS", `Unexpected query parameter(s): ${extra.slice(0, 10).join(", ")}.`);
+}
+
+/** Records a 429 in the audit trail, at most once per key and window (rule name only: no raw emails). */
+async function logRateLimited(ctx: Ctx, def: RouteDef, rule: string, key: string, windowMs: number) {
+  if (!shouldLogLimit(key, windowMs)) return;
+  const user = ctx.session?.user ?? null;
+  await withPlatform((db) =>
+    writeAudit(db, {
+      tenantId: user?.tenantId ?? null,
+      actor: user,
+      action: "security.rate_limited",
+      entityType: "api",
+      ip: ctx.ip,
+      userAgent: ctx.userAgent,
+      meta: { rule: rule.split(":")[0] === "route-ip" || rule.split(":")[0] === "route-user" ? rule : rule.split(":")[0], route: `${def.method} ${def.path}`, requestId: ctx.requestId },
+    }),
+  ).catch((e) => console.error("[ratelimit] could not log 429", e instanceof Error ? e.message : e));
+}
+
 async function autoAudit(def: RouteDef, ctx: Ctx & { _audited?: boolean }) {
   if (def.method === "GET" || def.audit === false || ctx._audited) return;
   await ctx.audit(def.audit ?? `${def.method} ${def.path}`, {
@@ -431,8 +534,12 @@ async function logDenial(ctx: Ctx, def: RouteDef, err: HttpError) {
 }
 
 export function errorResponse(err: unknown, headers?: Headers): Response {
-  if (err instanceof HttpError)
-    return json(err.status, { error: { code: err.code, message: err.message, details: err.details } }, headers);
+  if (err instanceof HttpError) {
+    // Details reach the browser only where the screen needs them; the rest
+    // (permission keys, feature lists, internal names) stays in server logs.
+    const details = PUBLIC_DETAIL_CODES.has(err.code) ? err.details : undefined;
+    return json(err.status, { error: { code: err.code, message: err.message, ...(details === undefined ? {} : { details }) } }, headers);
+  }
   if (err instanceof ZodError) {
     const issues = err.issues.map((i) => ({ path: i.path.join("."), message: i.message }));
     const first = issues[0];
@@ -447,9 +554,10 @@ export function errorResponse(err: unknown, headers?: Headers): Response {
   if (err instanceof Prisma.PrismaClientKnownRequestError) {
     if (err.code === "P2002") {
       const target = (err.meta?.target as string[] | string | undefined) ?? "";
-      const fields = (Array.isArray(target) ? target : [target]).filter((f) => f !== "tenant_id" && f !== "tenantId");
+      // Only user-facing field names are mentioned; internal column names never are.
+      const fields = (Array.isArray(target) ? target : [target]).map((f) => FRIENDLY_FIELDS[f]).filter(Boolean);
       return json(409, {
-        error: { code: "DUPLICATE", message: `A record with the same ${fields.join(", ") || "value"} already exists.`, details: { fields } },
+        error: { code: "DUPLICATE", message: `A record with the same ${fields.join(", ") || "details"} already exists.` },
       }, headers);
     }
     // P2025 missing record; P2023 malformed id (e.g. not a UUID): both are simply "not found".
@@ -465,6 +573,10 @@ export function errorResponse(err: unknown, headers?: Headers): Response {
     return json(403, { error: { code: "AUDIT_IMMUTABLE", message: "Audit records cannot be changed." } }, headers);
   if (msg.includes("stay_reservations_no_overlap"))
     return json(409, { error: { code: "ROOM_ALREADY_BOOKED", message: "The room is already booked for some of these dates." } }, headers);
-  console.error("[api] unhandled error", headers?.get("x-request-id") ?? "", err instanceof Error ? `${err.name}: ${err.message}` : err);
-  return json(500, { error: { code: "INTERNAL", message: "Something went wrong. Please try again." } }, headers);
+  // Full details (stack included, personal data masked) go to the server log under the
+  // request id; the user only sees a friendly message and that id as a reference.
+  const reference = headers?.get("x-request-id") ?? undefined;
+  // The reference goes in the (unredacted) tag: it must stay searchable in the logs.
+  logError(`api ref=${reference ?? "-"}`, "unhandled error", err);
+  return json(500, { error: { code: "INTERNAL", message: "Something went wrong. Please try again.", reference } }, headers);
 }

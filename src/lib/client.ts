@@ -67,7 +67,10 @@ async function call<T>(path: string, opts: CallOptions): Promise<T> {
   const isJson = (res.headers.get("content-type") || "").includes("application/json");
   const data = isJson ? await res.json().catch(() => null) : null;
   if (!res.ok) {
-    const err = new ApiError(res.status, data?.error?.code ?? "ERROR", data?.error?.message ?? `Request failed (${res.status})`, data?.error?.details);
+    // Server errors carry a reference (the request id) the user can quote to support.
+    const reference = res.status >= 500 ? (data?.error?.reference ?? res.headers.get("x-request-id")) : null;
+    const base = data?.error?.message ?? (res.status >= 500 ? "Something went wrong. Please try again." : "The request could not be completed.");
+    const err = new ApiError(res.status, data?.error?.code ?? "ERROR", reference ? `${base} (Reference: ${reference})` : base, data?.error?.details);
     if (typeof window !== "undefined" && !opts.noRedirect) {
       if (err.code === "MFA_REQUIRED" && window.location.pathname !== "/mfa") {
         window.location.href = "/mfa";

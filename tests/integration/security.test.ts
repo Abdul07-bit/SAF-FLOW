@@ -18,7 +18,7 @@ const imageForm = (bytes: Uint8Array, name = "photo.png") => {
   fd.append("file", new File([new Uint8Array(bytes)], name, { type: "image/png" }));
   return fd;
 };
-const fillPath = (p: string) => p.replace(/:product/g, "dine").replace(/:[A-Za-z]+/g, randomUUID()).replace(/\*[A-Za-z]+/g, "x");
+const fillPath = (p: string) => p.replace(/:product\b/g, "dine").replace(/:[A-Za-z]+/g, randomUUID()).replace(/\*[A-Za-z]+/g, "x");
 
 /** Moves a user's sessions' last fresh authentication into the past. */
 const expireStepUp = (userId: string) =>
@@ -127,7 +127,8 @@ describe("tenant isolation (API, every method)", () => {
 
     for (const [path, id] of Object.entries(made)) {
       for (const method of ["GET", "PATCH", "DELETE"] as const) {
-        const r = await api(method, `${path}/${id}`, { cookie: a.manager, body: method === "PATCH" ? { name: "hijack", fullName: "hijack" } : undefined });
+        const field = path.endsWith("/employees") ? "fullName" : "name";
+        const r = await api(method, `${path}/${id}`, { cookie: a.manager, body: method === "PATCH" ? { [field]: "hijack" } : undefined });
         expect([403, 404], `${method} ${path} -> ${r.status} ${JSON.stringify(r.body)}`).toContain(r.status);
       }
       const list = await api("GET", path, { cookie: a.manager });
@@ -450,5 +451,70 @@ describe("hosting: Vercel cron and Android app links", () => {
       if (prev.p === undefined) delete process.env.ANDROID_PACKAGE_NAME; else process.env.ANDROID_PACKAGE_NAME = prev.p;
       if (prev.c === undefined) delete process.env.ANDROID_CERT_SHA256; else process.env.ANDROID_CERT_SHA256 = prev.c;
     }
+  });
+});
+
+describe("input validation and rate limits (live)", () => {
+  it("unknown fields and query parameters are refused; malformed ids are not found", async () => {
+    const biz = await createBusiness([{ productCode: "dine", tier: "BASIC" }]);
+    expectError(await api("POST", "/dine/tables", { cookie: biz.manager, body: { name: "T9", tenantId: randomUUID() } }), 400, "UNKNOWN_FIELDS");
+    expectError(await api("POST", "/dine/tables", { cookie: biz.manager, body: { name: "T9", nested: { isAdmin: true } } }), 400, "UNKNOWN_FIELDS");
+    expectError(await api("GET", "/dine/tables?q=a&isAdmin=1", { cookie: biz.manager }), 400, "UNKNOWN_FIELDS");
+    expectError(await api("POST", "/auth/logout", { cookie: biz.manager, body: { anything: 1 } }), 400, "UNKNOWN_FIELDS");
+    expectError(await api("PUT", "/dine/settings", { cookie: biz.manager, body: { receiptFooter: "ok", hotelName: "wrong product" } }), 400, "UNKNOWN_FIELDS");
+    expectError(await api("GET", "/dine/tables/not-a-uuid", { cookie: biz.manager }), 404);
+    // Permission errors no longer reveal internal permission keys.
+    const waiter = await createStaff(biz.manager, "dine", "w2", [{ product: "dine", roleCode: "waiter" }]);
+    const denied = await api("PUT", "/dine/settings", { cookie: waiter.cookie, body: { receiptFooter: "x" } });
+    expect(denied.status).toBe(403);
+    expect(denied.body.error.details).toBeUndefined();
+  });
+
+  it("login is limited per IP and per account; the 429 is logged; password reset stays silent", async () => {
+    const { resetRateLimits } = await import("@/server/auth/ratelimit");
+    const prev = process.env.SAF_DISABLE_RATE_LIMIT;
+    process.env.SAF_DISABLE_RATE_LIMIT = "0";
+    resetRateLimits();
+    try {
+      const ip = { "x-forwarded-for": "198.51.100.77" };
+      const statuses: number[] = [];
+      for (let i = 0; i < 6; i++)
+        statuses.push((await api("POST", "/auth/login", { headers: ip, body: { username: `nobody${i}@x.example`, password: "wrong-pass-1" } })).status);
+      expect(statuses.slice(0, 5).every((s) => s === 401)).toBe(true);
+      expect(statuses[5]).toBe(429);
+      const blocked = await api("POST", "/auth/login", { headers: ip, body: { username: "nobody@x.example", password: "x" } });
+      expect(blocked.status).toBe(429);
+      expect(Number(blocked.headers.get("retry-after"))).toBeGreaterThan(0);
+      expect(blocked.body.error.message).toMatch(/Too many attempts/);
+      const logged = await withPlatform((db) => db.auditLog.findFirst({ where: { action: "security.rate_limited", ip: "198.51.100.77" } }));
+      expect(logged).not.toBeNull();
+
+      // Per account, from many addresses: the 11th try within 15 minutes is refused.
+      const acct: number[] = [];
+      for (let i = 0; i < 11; i++)
+        acct.push((await api("POST", "/auth/login", { headers: { "x-forwarded-for": `203.0.113.${i + 1}` }, body: { username: "victim@x.example", password: "wrong-pass-1" } })).status);
+      expect(acct[9]).toBe(401);
+      expect(acct[10]).toBe(429);
+
+      // Password reset: over the per-email limit the answer is identical (nothing to learn).
+      const answers = new Set<string>();
+      for (let i = 0; i < 5; i++)
+        answers.add(JSON.stringify((await api("POST", "/auth/password-reset", { headers: { "x-forwarded-for": `192.0.2.${i + 1}` }, body: { email: "someone@x.example" } })).body));
+      expect(answers.size).toBe(1);
+    } finally {
+      if (prev === undefined) delete process.env.SAF_DISABLE_RATE_LIMIT; else process.env.SAF_DISABLE_RATE_LIMIT = prev;
+      resetRateLimits();
+    }
+  });
+
+  it("an invoice link older than 90 days has expired", async () => {
+    const biz = await createBusiness([{ productCode: "bill", tier: "BASIC" }]);
+    const cat = await api("POST", "/bill/categories", { cookie: biz.manager, body: { name: "Grocery" } });
+    const prod = await api("POST", "/bill/products", { cookie: biz.manager, body: { name: "Soap", sku: `S-${biz.code}`, categoryId: cat.body.id, price: 10000, taxRate: 0, openingStock: 5 } });
+    const sale = await api("POST", "/bill/sales", { cookie: biz.manager, body: { items: [{ productId: prod.body.id, qty: 1 }], paymentMethod: "CASH", amountPaid: 10000 } });
+    expect(sale.status, JSON.stringify(sale.body)).toBe(201);
+    expect((await api("GET", `/public/invoice/bill/${sale.body.publicToken}`)).status).toBe(200);
+    await withPlatform((db) => db.billSale.update({ where: { id: sale.body.id }, data: { createdAt: new Date(Date.now() - 91 * 86_400_000) } }));
+    expectError(await api("GET", `/public/invoice/bill/${sale.body.publicToken}`), 410, "LINK_EXPIRED");
   });
 });

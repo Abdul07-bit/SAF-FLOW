@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { logError } from "../core/log";
 import { PRODUCTS, PRODUCT_CODES, isProductCode, type ProductCode } from "@/config/catalog";
 import { route, type Ctx } from "../http/router";
 import { registerCrud } from "../http/crud";
@@ -147,6 +148,7 @@ route({
     /** Restrict to these branches; omitted or [] = every branch. */
     branchIds: z.array(z.uuid()).max(50).optional(),
   }),
+  rateLimit: { limit: 10, windowMs: 60 * 60_000, by: "user" },
   handler: async (ctx) => {
     if (ctx.body.signIn === "email") {
       const email = (ctx.body.email ?? "").toLowerCase();
@@ -217,6 +219,7 @@ route({
 
 route({
   method: "POST", path: "/:product/team/:userId/reset-password", tag: "team", summary: "Reset a staff password (issues a temporary password)", auth: TEAM, stepUp: true,
+  rateLimit: { limit: 10, windowMs: 60 * 60_000, by: "user" },
   handler: async (ctx) => {
     const u = await loadMember(ctx);
     if (u.authUserId) {
@@ -239,6 +242,7 @@ route({
 route({
   method: "POST", path: "/:product/team/:userId/resend-invite", tag: "team", summary: "Send a fresh invitation to a staff member who has not accepted yet", auth: TEAM,
   body: z.object({ delivery: z.enum(["email", "link"]).default("email") }),
+  rateLimit: { limit: 10, windowMs: 60 * 60_000, by: "user" },
   handler: async (ctx) => {
     const u = await loadMember(ctx);
     const r = await resendInvite(ctx.db, u.id, ctx.body.delivery);
@@ -294,9 +298,11 @@ route({
   auth: { product: ":product", permission: "settings.manage" }, stepUp: true,
   body: z.record(z.string(), z.unknown()),
   handler: async (ctx) => {
+    // Only this product's settings are accepted; types are checked when the result is saved.
     const allowed = Object.keys(productSettingsSchemas[ctx.product].shape);
-    const patch = Object.fromEntries(Object.entries(ctx.body).filter(([k]) => allowed.includes(k)));
-    return saveProductSettings(ctx.db, ctx.tenantId, ctx.product, patch);
+    const extra = Object.keys(ctx.body).filter((k) => !allowed.includes(k));
+    if (extra.length) throw new HttpError(400, "UNKNOWN_FIELDS", `Unexpected field(s): ${extra.slice(0, 10).join(", ")}.`, { fields: extra });
+    return saveProductSettings(ctx.db, ctx.tenantId, ctx.product, ctx.body);
   },
 });
 
@@ -315,6 +321,7 @@ route({
 route({
   method: "POST", path: "/:product/business/logo", tag: "settings", summary: "Upload business logo (used on invoices and ID cards)",
   auth: { product: ":product", permission: "settings.manage" }, multipart: true,
+  rateLimit: { limit: 20, windowMs: 60 * 60_000, by: "user" },
   handler: async (ctx) => {
     const key = await saveImage(ctx.tenantId, "logo", ctx.form!.get("file") as File | null);
     await ctx.db.business.update({ where: { tenantId: ctx.tenantId }, data: { logoKey: key } });
@@ -389,6 +396,7 @@ route({
     billingCycle: z.enum(["MONTHLY", "ANNUAL"]).optional(),
     message: z.string().max(1000).optional(),
   }),
+  rateLimit: { limit: 10, windowMs: 60 * 60_000, by: "user" },
   handler: async (ctx) => {
     const name = PRODUCTS[ctx.product].name;
     const t = await openTicket(ctx.db, ctx.tenantId, ctx.user.id, ctx.user.fullName, {
@@ -444,7 +452,7 @@ export async function settleGatewayOrder(db: Tx, orderId: string, paymentId: str
   if (!pending) throw notFound("Payment");
   if (pending.status === "SUCCEEDED") return { payment: pending, settledNow: false };
   if (amountPaise !== pending.amount) {
-    console.error("[cashfree] amount mismatch", { orderId, expected: pending.amount, got: amountPaise });
+    logError("cashfree", "amount mismatch", { orderId, expected: pending.amount, got: amountPaise });
     await writeAudit(db, { tenantId: pending.tenantId, action: "billing.payment_amount_mismatch", entityType: "payment", entityId: pending.id, meta: { orderId, expected: pending.amount, got: amountPaise } });
     throw conflict("The paid amount does not match this order. SAF support has been notified.");
   }
@@ -483,6 +491,7 @@ route({
 route({
   method: "POST", path: "/webhooks/cashfree", tag: "billing", summary: "Cashfree payment webhook (PAYMENT_SUCCESS_WEBHOOK)",
   auth: { public: true }, rawBody: true, audit: false,
+  rateLimit: { limit: 120, windowMs: 60_000 },
   handler: async (ctx) => {
     const raw = await ctx.req.text();
     if (raw.length > 64 * 1024) throw new HttpError(413, "PAYLOAD_TOO_LARGE", "Webhook body too large.");
@@ -504,13 +513,13 @@ route({
       const known = await withPlatform((db) => db.payment.findUnique({ where: { gatewayOrderId: orderId }, select: { id: true } }));
       if (!known) return { ok: true };
       const r = await fetchCashfreePayment(orderId).catch((e) => {
-        console.error("[cashfree] webhook verification failed", orderId, e instanceof Error ? e.message : e);
+        logError("cashfree", "webhook verification failed", orderId, e instanceof Error ? e.message : e);
         return null;
       });
       if (r && "cfPaymentId" in r) {
         await withPlatform(async (db) => {
           const s = await settleGatewayOrder(db, orderId, r.cfPaymentId, r.amountPaise).catch((e) => {
-            console.error("[cashfree] webhook not settled", orderId, e instanceof Error ? e.message : e);
+            logError("cashfree", "webhook not settled", orderId, e instanceof Error ? e.message : e);
             return null;
           });
           if (s?.settledNow) await writeAudit(db, { tenantId: s.payment.tenantId, action: "billing.webhook_payment", entityType: "payment", entityId: s.payment.id, meta: { gateway: "cashfree", requestId: ctx.requestId } });
@@ -542,6 +551,7 @@ route({
   method: "POST", path: "/catalog/:product/request", tag: "billing", summary: "Ask SAF to activate a product for this business",
   auth: { session: true },
   body: z.object({ tier: z.enum(["BASIC", "GROWTH"]), billingCycle: z.enum(["MONTHLY", "ANNUAL"]), message: z.string().max(1000).optional() }),
+  rateLimit: { limit: 10, windowMs: 60 * 60_000, by: "user" },
   handler: async (ctx) => {
     const product = ctx.params.product;
     if (!isProductCode(product)) throw notFound("Product");
@@ -580,6 +590,7 @@ route({
     priority: z.enum(["LOW", "NORMAL", "HIGH", "URGENT"]).default("NORMAL"),
     body: z.string().trim().min(3).max(4000),
   }),
+  rateLimit: { limit: 10, windowMs: 60 * 60_000, by: "user" },
   handler: async (ctx) => {
     const t = await openTicket(ctx.db, ctx.tenantId, ctx.user.id, ctx.user.fullName, { ...ctx.body, product: ctx.product });
     ctx.status = 201;
@@ -599,6 +610,7 @@ route({
 route({
   method: "POST", path: "/:product/support/tickets/:id/messages", tag: "support", summary: "Reply on a ticket", auth: SUPPORT,
   body: z.object({ body: z.string().trim().min(1).max(4000) }),
+  rateLimit: { limit: 30, windowMs: 60 * 60_000, by: "user" },
   handler: async (ctx) => {
     const t = await ctx.db.supportTicket.findFirst({ where: { id: ctx.params.id, tenantId: ctx.tenantId } });
     if (!t) throw notFound("Ticket");

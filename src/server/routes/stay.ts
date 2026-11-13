@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { assertPublicLinkFresh } from "../core/public-links";
 import type { Prisma } from "@prisma/client";
 import {
   addDays, dateOnly, daysBetween, eachDate, endOfDayIST, financialYear, fmtDate, fromDateOnly, isISODate, istDate,
@@ -912,13 +913,14 @@ route({
 
 route({
   method: "GET", path: "/public/invoice/stay/:token", tag: "public", summary: "Printable hotel invoice",
-  auth: { public: true }, rateLimit: { limit: 120, windowMs: 60_000 },
+  auth: { public: true }, rateLimit: { limit: 60, windowMs: 60_000 },
   handler: async (ctx) => {
     const ref = await withPlatform((db) => db.stayReservation.findUnique({ where: { publicToken: ctx.params.token }, select: { id: true, tenantId: true } }));
     if (!ref) throw notFound("Invoice");
     return withTenant(ref.tenantId, async (db) => {
       const r = await db.stayReservation.findUniqueOrThrow({ where: { id: ref.id }, include: resInclude });
       if (r.status !== "CHECKED_OUT") throw notFound("Invoice");
+      assertPublicLinkFresh(r.checkedOutAt ?? r.createdAt);
       const business = await db.business.findUniqueOrThrow({ where: { tenantId: ref.tenantId } });
       const settings = await getProductSettings(db, ref.tenantId, "stay");
       const f = folio(r);

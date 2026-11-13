@@ -18,7 +18,7 @@ route({
 
 route({
   method: "GET", path: "/files/*key", tag: "system", summary: "Serve an uploaded image (logo / employee photo)",
-  auth: { public: true }, rateLimit: { limit: 600, windowMs: 60_000 },
+  auth: { public: true }, rateLimit: { limit: 300, windowMs: 60_000 },
   handler: async (ctx) => {
     const key = ctx.params.key;
     if (!/^t\/[0-9a-f-]{36}\/[a-z]+\/[0-9a-f-]{36}\.(png|jpg)$/.test(key)) throw notFound("File");
@@ -60,14 +60,14 @@ async function renewalJob(ctx: { req: Request }) {
 route({
   method: "POST", path: "/jobs/renewals", tag: "system",
   summary: "Scheduled renewal job (expire lapsed subscriptions, raise renewal invoices, send reminders). Requires the cron secret.",
-  auth: { public: true }, rateLimit: { limit: 10, windowMs: 60_000 }, audit: false,
+  auth: { public: true }, rateLimit: { limit: 5, windowMs: 60_000 }, audit: false,
   handler: renewalJob,
 });
 
 route({
   method: "GET", path: "/jobs/renewals", tag: "system",
   summary: "Same job for Vercel Cron (GET with Authorization: Bearer <CRON_SECRET>).",
-  auth: { public: true }, rateLimit: { limit: 10, windowMs: 60_000 }, audit: false,
+  auth: { public: true }, rateLimit: { limit: 5, windowMs: 60_000 }, audit: false,
   handler: renewalJob,
 });
 

@@ -1,4 +1,5 @@
 import type { Prisma } from "@prisma/client";
+import { logError } from "../core/log";
 import { z } from "zod";
 import { PRODUCTS, isProductCode } from "@/config/catalog";
 import { route } from "../http/router";
@@ -59,11 +60,11 @@ function accountKey(raw: string) {
 
 route({
   method: "POST", path: "/auth/login", tag: "auth", summary: "Sign in with email or login ID and password",
-  auth: { public: true }, body: loginBody, rateLimit: { limit: 20, windowMs: 60_000 },
+  auth: { public: true }, body: loginBody, rateLimit: { limit: 5, windowMs: 60_000 },
   handler: async (ctx) => {
     const raw = ctx.body.username.trim();
-    const perAccount = rateLimit(`login:${accountKey(raw)}`, 15, 15 * 60_000);
-    if (!perAccount.ok) throw new HttpError(429, "RATE_LIMITED", "Too many sign-in attempts for this account. Please wait.");
+    // Per typed account name (exists or not, so this reveals nothing), shared across servers.
+    await ctx.limit("login-account", accountKey(raw), 10, 15 * 60_000);
 
     const maxFailures = Number(process.env.LOGIN_MAX_FAILURES || 5);
     const lockMinutes = Number(process.env.LOGIN_LOCK_MINUTES || 15);
@@ -184,7 +185,7 @@ route({
   summary: "Change own password (required after first login with a temporary password)",
   auth: { session: true, allowPasswordChange: true, allowMfaEnrollment: true },
   body: z.object({ currentPassword: z.string().min(1).max(200), newPassword: z.string().min(1).max(200) }),
-  rateLimit: { limit: 10, windowMs: 60_000 },
+  rateLimit: [{ limit: 10, windowMs: 60_000 }, { limit: 5, windowMs: 15 * 60_000, by: "user" }],
   handler: async (ctx) => {
     const { currentPassword, newPassword } = ctx.body;
     const user = await withPlatform((db) => db.user.findUniqueOrThrow({ where: { id: ctx.user.id } }));
@@ -229,7 +230,7 @@ const asHttp = identityToHttp;
 route({
   method: "POST", path: "/auth/password-reset", tag: "auth",
   summary: "Email a password-reset link (email accounts). Always answers the same way.",
-  auth: { public: true }, rateLimit: { limit: 5, windowMs: 60_000 },
+  auth: { public: true }, rateLimit: { limit: 5, windowMs: 15 * 60_000 },
   body: z.object({ email: z.string().trim().max(200) }),
   handler: async (ctx) => {
     const email = ctx.body.email.toLowerCase();
@@ -237,7 +238,8 @@ route({
       ok: true,
       message: "If an account exists for this email, a reset link is on its way. Staff who sign in with a login ID should ask their manager.",
     };
-    if (!looksLikeEmail(email) || !rateLimit(`reset:${email}`, 3, 60 * 60_000).ok) return generic;
+    // Over the per-email limit the answer stays the same (no enumeration), but no email is sent.
+    if (!looksLikeEmail(email) || !(await rateLimit(`reset-email:${email}`, 3, 60 * 60_000)).ok) return generic;
     const user = await withPlatform((db) =>
       db.user.findFirst({ where: { authUserId: { not: null }, email: { equals: email, mode: "insensitive" } } }),
     );
@@ -247,7 +249,7 @@ route({
       await withPlatform((db) => writeAudit(db, { tenantId: user.tenantId, actor: user, action: "auth.password_reset_requested", ip: ctx.ip }));
     } catch (e) {
       // Do not reveal whether the account exists; the failure is logged.
-      console.error("[auth] password reset email failed", e);
+      logError("auth", "password reset email failed", e);
     }
     return generic;
   },
@@ -275,7 +277,7 @@ async function linkedAccount(accessToken: string) {
 route({
   method: "POST", path: "/auth/link/inspect", tag: "auth",
   summary: "Describe an invitation / reset link before the user sets a password",
-  auth: { public: true }, body: linkBody, rateLimit: { limit: 30, windowMs: 60_000 },
+  auth: { public: true }, body: linkBody, rateLimit: { limit: 10, windowMs: 15 * 60_000 },
   handler: async (ctx) => {
     const { user, invitation, purpose } = await linkedAccount(ctx.body.accessToken);
     if (invitation && invitation.expiresAt < new Date())
@@ -291,7 +293,7 @@ route({
 route({
   method: "POST", path: "/auth/link/complete", tag: "auth",
   summary: "Set a password from an invitation / reset link and sign in",
-  auth: { public: true }, rateLimit: { limit: 10, windowMs: 60_000 },
+  auth: { public: true }, rateLimit: { limit: 10, windowMs: 15 * 60_000 },
   body: linkBody.extend({ password: z.string().min(1).max(200) }),
   handler: async (ctx) => {
     const { user, invitation, purpose } = await linkedAccount(ctx.body.accessToken);

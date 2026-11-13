@@ -69,9 +69,40 @@ Apply with `npm run db:migrate` (`prisma migrate deploy`) as the owner role. Exi
 - **Old employee photo URLs** saved outside the app stop working. Within the app, new signed URLs are issued automatically.
 - **Two existing tests were updated** to the new generic sign-in error (`platform.test.ts`, `saf-flow-foundation.test.ts`). The Cashfree webhook test was extended, since the webhook now re-verifies with the gateway.
 
+## 6a. Pre-launch review changes
+**Rate limits** (shared through Upstash Redis when configured; per IP before sign-in, per user after):
+
+| Endpoint | Limit |
+|---|---|
+| Every request | 1,200/min per IP; 600 reads and 120 changes/min per signed-in user |
+| `POST /auth/login` | 5/min per IP; 10 per 15 min per typed account (plus the 5-failure lockout) |
+| `POST /auth/mfa/verify` | 10/min per IP, 5/min per user (plus the 5-wrong-codes lock) |
+| `POST /auth/step-up` | 10/min per IP, 5 per 5 min per user |
+| `POST /auth/change-password`, MFA set-up / enable / disable / recovery codes | 5 per 15 min per user |
+| `POST /auth/password-reset` (sends email) | 5 per 15 min per IP; 3/hour per email (silent past the limit) |
+| `POST /auth/link/inspect`, `/auth/link/complete` | 10 per 15 min per IP |
+| Invites, resend invite, staff and admin password resets (send email) | 10/hour per user |
+| Uploads (admin logo, business logo, employee photo) | 20/hour per user |
+| Support tickets, product and plan requests | 10/hour per user (ticket replies 30/hour) |
+| `POST /public/dine/menu/:qrToken/order` | 10/min per IP; 30/hour per table |
+| Public menu, order tracking, invoices, staff ID check | 60/min per IP |
+| `GET /api/files/*` | 300/min per IP |
+| Cashfree webhook / renewal job | 120/min / 5/min per IP |
+
+**Other changes:**
+- unknown fields rejected (`400 UNKNOWN_FIELDS`), and UUID checks on ID parameters;
+- uploads re-encoded (metadata stripped, 25 MP cap);
+- invoice and order links expire after 90 days;
+- friendly error pages, plus a reference ID on server errors;
+- error details only where the interface needs them;
+- redacted server logging (`src/server/core/log.ts`);
+- production refuses to start with development passwords (`src/instrumentation.ts`);
+- new packages `@upstash/ratelimit@2.2.0` and `@upstash/redis@1.40.0` (official Upstash publisher, millions of weekly downloads);
+- `pngjs`, `jpeg-js` and `@types/pngjs` pinned to exact versions.
+
 ## 7. Requires your approval or action (not done by me)
 - Setting the production secrets, the MFA policy and `TRUSTED_PROXY_HOPS` (`SECURITY_CHECKLIST.md` → Go-live).
 - Applying the migrations to the production database, then re-running the seed so the new permissions and the Security Administrator role exist.
-- Pushing the branch and enabling the workflow on GitHub (the repository has no remote yet).
+- Connecting Upstash Redis in Vercel so rate limits are shared (`docs/VERCEL-AND-APK.md` step 4a).
 - Encrypting backups, scheduling them and running a restore test (SEC-23).
 - Architectural follow-ups listed as remaining in the audit report (SEC-22, SEC-24 to SEC-30).

@@ -18,13 +18,14 @@ import { revokeUserSessions } from "../auth/session";
 import { mfaRequiredFor } from "../auth/mfa";
 import { appSecretConfigured } from "../core/keys";
 import { isCashfreeConfigured } from "../payments/cashfree";
+import { sharedRateLimitConfigured } from "../auth/ratelimit";
 
 const H = 3_600_000;
 const FAILED = ["auth.login_failed", "auth.account_locked", "auth.login_blocked_locked", "auth.mfa_failed", "auth.step_up_failed"];
 const SIGN_IN = ["auth.login", ...FAILED, "auth.logout", "auth.logout_all", "auth.password_changed", "auth.password_reset_completed"];
 const SECURITY_ACTIONS = [
   ...SIGN_IN, "auth.mfa_enabled", "auth.mfa_disabled", "auth.mfa_recovery_code_used", "auth.mfa_recovery_codes_regenerated",
-  "auth.step_up", "security.access_denied", "security.mfa_reset", "security.sessions_revoked", "team.user.mfa_reset",
+  "auth.step_up", "security.access_denied", "security.rate_limited", "security.mfa_reset", "security.sessions_revoked", "team.user.mfa_reset",
   "team.user.create", "team.user.invite", "team.user.update", "team.user.enable", "team.user.disable", "team.user.reset_password",
   "team.user.reset_password_email", "security.session_revoked", "billing.payment_amount_mismatch",
 ];
@@ -78,6 +79,7 @@ route({
         GROUP BY 1 ORDER BY 1`,
       db.tenant.groupBy({ by: ["status"], _count: { _all: true } }),
     ]);
+    const rateLimited24h = await db.auditLog.count({ where: { action: "security.rate_limited", createdAt: { gt: d1 } } });
 
     const alerts: Alert[] = [];
     const noMfaAdmins = platformUsers.filter((u) => !u.mfaEnabledAt);
@@ -93,6 +95,9 @@ route({
     if (process.env.NODE_ENV === "production" && !(process.env.APP_URL || "").startsWith("https://"))
       alerts.push({ severity: "critical", title: "Not served over HTTPS", detail: "Set APP_URL to the https:// address so cookies are Secure and HSTS is sent." });
     if (locked >= 10) alerts.push({ severity: "medium", title: `${locked} accounts are locked`, detail: "Many lockouts usually mean an attack on several accounts." });
+    if (rateLimited24h >= 100) alerts.push({ severity: "medium", title: "Many requests were rate limited", detail: `${rateLimited24h} rate-limit hits in 24 hours: someone may be automating requests.` });
+    if (process.env.VERCEL && !sharedRateLimitConfigured())
+      alerts.push({ severity: "high", title: "Rate limits are not shared between servers", detail: "Add Upstash Redis (UPSTASH_REDIS_REST_URL / _TOKEN) in Vercel so limits work across all instances." });
     if (denied24 >= 50) alerts.push({ severity: "medium", title: "Many access denials", detail: `${denied24} permission denials in 24 hours: a client may be probing endpoints.` });
 
     const required = (k: string) => mfaRequiredFor({ kind: k === "platform" ? "PLATFORM" : "TENANT", isTenantOwner: true });
@@ -101,7 +106,7 @@ route({
     return {
       status: alerts.some((a) => a.severity === "critical") ? "critical" : alerts.some((a) => a.severity === "high") ? "attention" : "ok",
       alerts,
-      signIns: { failed24h: failed24, failed7d: failed7, accessDenied24h: denied24, lockedAccounts: locked, liveSessions },
+      signIns: { failed24h: failed24, failed7d: failed7, accessDenied24h: denied24, lockedAccounts: locked, liveSessions, rateLimited24h },
       trend: trendRows.map((r) => ({ day: r.day, failed: Number(r.failed), ok: Number(r.ok) })),
       suspiciousIps: ipsLastHour.filter((x) => x._count._all >= 5).sort((a, b) => b._count._all - a._count._all).slice(0, 10).map((x) => ({ ip: x.ip, failures: x._count._all })),
       mfa: {
@@ -119,6 +124,7 @@ route({
         { check: "Two-step verification required for business owners", ok: required("owners") },
         { check: "Payment gateway configured", ok: isCashfreeConfigured() },
         { check: "Scheduled jobs secret (CRON_SECRET)", ok: (process.env.CRON_SECRET || "").length >= 12 },
+        { check: "Shared rate limiting (Upstash Redis) for multi-server hosting", ok: sharedRateLimitConfigured() },
       ],
       // Not observable from inside the application; reported honestly.
       external: {

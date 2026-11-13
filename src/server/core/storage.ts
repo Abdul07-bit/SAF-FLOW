@@ -3,6 +3,8 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { badRequest } from "../http/errors";
 import { signFileUrl } from "./keys";
+import { PNG } from "pngjs";
+import jpeg from "jpeg-js";
 
 /**
  * File storage abstraction. STORAGE_DRIVER=local writes under ./storage;
@@ -106,9 +108,37 @@ export async function saveImage(tenantId: string, folder: string, file: File | n
   const bytes = new Uint8Array(await file.arrayBuffer());
   const kind = sniffImage(bytes);
   if (!kind) throw badRequest("Only PNG or JPEG images are supported.");
+  const clean = reencodeImage(bytes, kind);
   const key = `t/${tenantId}/${folder}/${randomUUID()}.${kind}`;
-  await storage().put(key, bytes, CONTENT_TYPES[kind]);
+  await storage().put(key, clean, CONTENT_TYPES[kind]);
   return key;
+}
+
+/** Decoding limit: a small file can describe a huge picture ("decompression bomb"). */
+const MAX_IMAGE_MEGAPIXELS = 25;
+
+/**
+ * Decodes the upload and writes a brand-new file from the pixels only. This
+ * drops every metadata block (EXIF GPS location, camera serials, comments)
+ * and anything appended to or hidden inside the original file.
+ */
+export function reencodeImage(bytes: Uint8Array, kind: "png" | "jpg"): Uint8Array {
+  try {
+    if (kind === "png") {
+      // Width and height sit in the IHDR chunk: check them before decoding anything.
+      const view = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+      const width = view.readUInt32BE(16), height = view.readUInt32BE(20);
+      if (!width || !height || width * height > MAX_IMAGE_MEGAPIXELS * 1_000_000) throw new Error("dimensions");
+      // Anything after the IEND chunk (a common hiding place) is cut off before decoding.
+      const iend = view.lastIndexOf("IEND");
+      const img = PNG.sync.read(iend > 0 ? view.subarray(0, iend + 8) : view);
+      return new Uint8Array(PNG.sync.write(img, { colorType: 6 }));
+    }
+    const img = jpeg.decode(bytes, { useTArray: true, maxResolutionInMP: MAX_IMAGE_MEGAPIXELS, maxMemoryUsageInMB: 512 });
+    return new Uint8Array(jpeg.encode({ data: img.data, width: img.width, height: img.height }, 90).data);
+  } catch {
+    throw badRequest(`This image could not be read. Use a normal PNG or JPEG photo up to ${MAX_IMAGE_MEGAPIXELS} megapixels.`);
+  }
 }
 
 /**

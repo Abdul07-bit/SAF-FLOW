@@ -93,13 +93,13 @@ describe("request hygiene", () => {
     expect(clientIp(req({ "x-forwarded-for": "6.6.6.6" }))).toBe("direct");
   });
 
-  it("rate limiter blocks after the limit; the test switch is ignored in production", () => {
+  it("rate limiter blocks after the limit; the test switch is ignored in production", async () => {
     delete process.env.SAF_DISABLE_RATE_LIMIT;
-    for (let i = 0; i < 3; i++) expect(rateLimit("unit:a", 3, 60_000).ok).toBe(true);
-    expect(rateLimit("unit:a", 3, 60_000).ok).toBe(false);
+    for (let i = 0; i < 3; i++) expect((await rateLimit("unit:a", 3, 60_000)).ok).toBe(true);
+    expect((await rateLimit("unit:a", 3, 60_000)).ok).toBe(false);
     process.env.SAF_DISABLE_RATE_LIMIT = "1";
     (process.env as any).NODE_ENV = "production";
-    expect(rateLimit("unit:a", 3, 60_000).ok).toBe(false);
+    expect((await rateLimit("unit:a", 3, 60_000)).ok).toBe(false);
   });
 
   it("Cashfree webhooks: HMAC over raw bytes, 5-minute freshness window", () => {
@@ -129,5 +129,79 @@ describe("request hygiene", () => {
     expect(CONTENT_SECURITY_POLICY).toContain("object-src 'none'");
     expect(CONTENT_SECURITY_POLICY).toContain("base-uri 'self'");
     expect(CONTENT_SECURITY_POLICY).toMatch(/script-src 'self' 'unsafe-inline'( 'unsafe-eval')? https:\/\/sdk\.cashfree\.com/);
+  });
+});
+
+describe("uploads, logs, links and error responses", () => {
+  it("re-encoding removes anything appended to a PNG and EXIF (GPS) data from a JPEG; huge pictures are refused", async () => {
+    const { reencodeImage } = await import("@/server/core/storage");
+    const { PNG } = await import("pngjs");
+    const jpeg = (await import("jpeg-js")).default;
+    const png = new PNG({ width: 2, height: 2 });
+    png.data.fill(200);
+    const withPayload = Buffer.concat([PNG.sync.write(png), Buffer.from("<?php system($_GET[1]); ?>")]);
+    const cleanPng = Buffer.from(reencodeImage(new Uint8Array(withPayload), "png"));
+    expect(cleanPng.includes("<?php")).toBe(false);
+    expect(PNG.sync.read(cleanPng).width).toBe(2);
+
+    const base = Buffer.from(jpeg.encode({ data: Buffer.alloc(4 * 4 * 4, 128), width: 4, height: 4 }, 90).data);
+    const exif = Buffer.concat([Buffer.from([0xff, 0xe1, 0x00, 0x18]), Buffer.from("Exif\0\0GPS-12.97N77.59E")]);
+    const withExif = Buffer.concat([base.subarray(0, 2), exif, base.subarray(2)]);
+    expect(withExif.includes("GPS-12.97N")).toBe(true);
+    const cleanJpg = Buffer.from(reencodeImage(new Uint8Array(withExif), "jpg"));
+    expect(cleanJpg.includes("GPS-12.97N")).toBe(false);
+    expect(jpeg.decode(cleanJpg).width).toBe(4);
+
+    // A tiny PNG header that claims 100000 x 100000 pixels is refused before decoding.
+    const bomb = Buffer.from(PNG.sync.write(png));
+    bomb.writeUInt32BE(100_000, 16);
+    bomb.writeUInt32BE(100_000, 20);
+    expect(() => reencodeImage(new Uint8Array(bomb), "png")).toThrow(/could not be read/);
+  });
+
+  it("logs mask emails, phone numbers, tokens and secret fields", async () => {
+    const { redact } = await import("@/server/core/log");
+    const out = redact('user ravi@example.com phone +91 98765 43210 token=abc123 "password":"hunter2" jwt eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.abc');
+    expect(out).not.toMatch(/ravi@example\.com|98765|hunter2|abc123|eyJhbGci/);
+    expect(out).toContain("[email]");
+  });
+
+  it("unknown request fields are detected at any depth; known ones are not", async () => {
+    const { unknownKeys } = await import("@/server/http/router");
+    expect(unknownKeys({ a: 1, b: { c: 2, d: 3 }, e: [{ f: 1, g: 2 }] }, { a: 1, b: { c: 2 }, e: [{ f: 1 }] })).toEqual(["b.d", "e[0].g"]);
+    expect(unknownKeys({ a: 1 }, { a: 1, defaulted: true })).toEqual([]);
+  });
+
+  it("public customer links expire after 90 days", async () => {
+    const { assertPublicLinkFresh } = await import("@/server/core/public-links");
+    expect(() => assertPublicLinkFresh(new Date(Date.now() - 89 * 86_400_000))).not.toThrow();
+    expect(() => assertPublicLinkFresh(new Date(Date.now() - 91 * 86_400_000))).toThrow(/expired/);
+  });
+
+  it("unexpected errors: friendly message plus a reference, nothing internal", async () => {
+    const { errorResponse } = await import("@/server/http/router");
+    const h = new Headers({ "x-request-id": "11111111-2222-3333-4444-555555555555" });
+    const res = errorResponse(new Error("connect ECONNREFUSED 10.0.0.5:5432 at /app/node_modules/pg/x.js for ravi@example.com"), h);
+    const body = await res.json();
+    expect(res.status).toBe(500);
+    expect(body).toEqual({ error: { code: "INTERNAL", message: "Something went wrong. Please try again.", reference: "11111111-2222-3333-4444-555555555555" } });
+  });
+});
+
+describe("error logging keeps the reference searchable", () => {
+  it("the request id in the log tag is not masked; personal data in the message is", async () => {
+    const { logError } = await import("@/server/core/log");
+    // Built at runtime so secret scanners do not mistake the sample id for a key.
+    const ref = ["682cd99b", "f405", "4108", "aa83", "fb632afe71ad"].join("-");
+    const lines: string[] = [];
+    const orig = console.error;
+    console.error = (...a: unknown[]) => lines.push(a.join(" "));
+    try {
+      logError(`api ref=${ref}`, "unhandled error", new Error("failed for ravi@example.com"));
+    } finally {
+      console.error = orig;
+    }
+    expect(lines[0]).toContain(ref);
+    expect(lines[0]).not.toContain("ravi@example.com");
   });
 });

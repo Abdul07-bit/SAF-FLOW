@@ -74,7 +74,7 @@ route({
 route({
   method: "POST", path: "/auth/mfa/verify", tag: "auth", summary: "Finish signing in with an authenticator or recovery code",
   auth: { session: true, allowMfaPending: true, allowPasswordChange: true, allowMfaEnrollment: true },
-  body: codeBody, rateLimit: { limit: 10, windowMs: 60_000 }, audit: false,
+  body: codeBody, rateLimit: [{ limit: 10, windowMs: 60_000 }, { limit: 5, windowMs: 60_000, by: "user" }], audit: false,
   handler: async (ctx) => {
     const s = ctx.session!;
     if (!s.mfaPending) throw badRequest("This session is already verified.");
@@ -113,6 +113,7 @@ route({
 route({
   method: "POST", path: "/auth/mfa/setup", tag: "auth", summary: "Start setting up an authenticator app (returns the QR code)",
   auth: { session: true, allowMfaEnrollment: true }, stepUp: true, audit: false,
+  rateLimit: { limit: 5, windowMs: 15 * 60_000, by: "user" },
   handler: async (ctx) => {
     if (ctx.user.mfaEnabled) throw badRequest("Two-step verification is already on.");
     const secret = newTotpSecret();
@@ -129,7 +130,7 @@ route({
 
 route({
   method: "POST", path: "/auth/mfa/enable", tag: "auth", summary: "Confirm the authenticator code and turn two-step verification on",
-  auth: { session: true, allowMfaEnrollment: true }, body: codeBody, rateLimit: { limit: 10, windowMs: 60_000 }, audit: false,
+  auth: { session: true, allowMfaEnrollment: true }, body: codeBody, rateLimit: [{ limit: 10, windowMs: 60_000 }, { limit: 5, windowMs: 15 * 60_000, by: "user" }], audit: false,
   handler: async (ctx) => {
     const meta = { ip: ctx.ip, userAgent: ctx.userAgent };
     const result = await withPlatform(async (db) => {
@@ -160,6 +161,7 @@ route({
 route({
   method: "POST", path: "/auth/mfa/recovery-codes", tag: "auth", summary: "Replace your recovery codes (old ones stop working)",
   auth: { session: true }, body: codeBody, stepUp: true, audit: false,
+  rateLimit: { limit: 5, windowMs: 15 * 60_000, by: "user" },
   handler: async (ctx) => {
     if (!(await checkSecondFactor(ctx.user.id, ctx.body.code, false))) throw new HttpError(400, "MFA_INVALID", "That code is not correct.");
     const { codes, hashes } = newRecoveryCodes();
@@ -174,6 +176,7 @@ route({
 route({
   method: "POST", path: "/auth/mfa/disable", tag: "auth", summary: "Turn two-step verification off (not allowed where it is required)",
   auth: { session: true }, body: codeBody, stepUp: true, audit: false,
+  rateLimit: { limit: 5, windowMs: 15 * 60_000, by: "user" },
   handler: async (ctx) => {
     if (mfaRequiredFor(ctx.user)) throw forbidden("MFA_REQUIRED_BY_POLICY", "Two-step verification is required for your account and cannot be turned off.");
     if (!(await checkSecondFactor(ctx.user.id, ctx.body.code, false))) throw new HttpError(400, "MFA_INVALID", "That code is not correct.");
@@ -189,7 +192,7 @@ route({
 route({
   method: "POST", path: "/auth/step-up", tag: "auth",
   summary: "Confirm it is you before a sensitive action (authenticator code, or password when MFA is off)",
-  auth: { session: true }, rateLimit: { limit: 10, windowMs: 60_000 }, audit: false,
+  auth: { session: true }, rateLimit: [{ limit: 10, windowMs: 60_000 }, { limit: 5, windowMs: 5 * 60_000, by: "user" }], audit: false,
   body: z.object({ code: z.string().trim().max(20).optional(), password: z.string().max(200).optional() }),
   handler: async (ctx) => {
     let ok = false;
@@ -224,6 +227,7 @@ route({
   method: "POST", path: "/admin/users/:id/mfa-reset", tag: "security", summary: "Reset a user's two-step verification (lost device)",
   auth: { platform: "platform.security.manage", elevated: true }, stepUp: true,
   body: z.object({ reason: z.string().trim().min(5).max(300) }),
+  rateLimit: { limit: 20, windowMs: 60 * 60_000, by: "user" },
   handler: async (ctx) => {
     if (ctx.params.id === ctx.user.id) throw badRequest("You cannot reset your own two-step verification.");
     const u = await ctx.db.user.findUnique({ where: { id: ctx.params.id } });

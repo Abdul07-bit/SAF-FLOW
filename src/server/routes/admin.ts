@@ -274,6 +274,7 @@ route({
 
 route({
   method: "POST", path: "/admin/businesses/:id/logo", tag: "admin", summary: "Upload business logo (PNG/JPEG)", auth: { platform: "platform.business.update", target: "business" }, multipart: true,
+  rateLimit: { limit: 20, windowMs: 60 * 60_000, by: "user" },
   handler: async ({ db, params, form, audit }) => {
     const t = await db.tenant.findUnique({ where: { id: params.id } });
     if (!t) throw notFound("Business");
@@ -591,6 +592,7 @@ route({
 
 route({
   method: "POST", path: "/admin/users/:id/reset-password", tag: "admin", summary: "Issue a new temporary password", auth: { platform: "platform.users.manage", target: "user" }, stepUp: true,
+  rateLimit: { limit: 10, windowMs: 60 * 60_000, by: "user" },
   handler: async ({ db, params, audit }) => {
     const u = await db.user.findUnique({ where: { id: params.id } });
     if (!u) throw notFound("User");

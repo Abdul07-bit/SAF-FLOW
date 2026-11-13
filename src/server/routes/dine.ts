@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { assertPublicLinkFresh } from "../core/public-links";
 import QRCode from "qrcode";
 import type { DineMovementType, Prisma } from "@prisma/client";
 import { addDays, endOfDayIST, financialYear, isISODate, istDate, istMinutes, startOfDayIST, todayIST } from "@/lib/dates";
@@ -878,7 +879,7 @@ async function tableByToken(qrToken: string) {
 
 route({
   method: "GET", path: "/public/dine/menu/:qrToken", tag: "public", summary: "Public QR menu for a table",
-  auth: { public: true }, rateLimit: { limit: 120, windowMs: 60_000 },
+  auth: { public: true }, rateLimit: { limit: 60, windowMs: 60_000 },
   handler: async (ctx) => {
     const t = await tableByToken(ctx.params.qrToken);
     return withTenant(t.tenantId, async (db) => {
@@ -911,6 +912,8 @@ route({
     notes: z.string().max(200).optional(),
   }),
   handler: async (ctx) => {
+    // Per table as well as per IP: a shared table QR cannot be used to flood the kitchen.
+    await ctx.limit("qr-table", ctx.params.qrToken, 30, 60 * 60_000);
     const t = await tableByToken(ctx.params.qrToken);
     return withTenant(t.tenantId, async (db) => {
       if (!(await tenantEntitled(db, t.tenantId, "dine", "qr_ordering")))
@@ -945,6 +948,7 @@ async function publicOrder(publicToken: string) {
   if (!o) throw notFound("Order");
   return withTenant(o.tenantId, async (db) => {
     const order = await db.dineOrder.findUniqueOrThrow({ where: { id: o.id }, include: { items: { orderBy: { createdAt: "asc" } }, table: { select: { name: true } } } });
+    assertPublicLinkFresh(order.paidAt ?? order.createdAt);
     const business = await db.business.findUniqueOrThrow({ where: { tenantId: o.tenantId } });
     const settings = await getProductSettings(db, o.tenantId, "dine");
     return { order, business: { ...business, logoUrl: fileUrl(business.logoKey) }, settings };
@@ -953,7 +957,7 @@ async function publicOrder(publicToken: string) {
 
 route({
   method: "GET", path: "/public/dine/orders/:token", tag: "public", summary: "Customer order tracking",
-  auth: { public: true }, rateLimit: { limit: 120, windowMs: 60_000 },
+  auth: { public: true }, rateLimit: { limit: 60, windowMs: 60_000 },
   handler: async (ctx) => {
     const { order, business } = await publicOrder(ctx.params.token);
     return {
@@ -966,7 +970,7 @@ route({
 
 route({
   method: "GET", path: "/public/invoice/dine/:token", tag: "public", summary: "Printable restaurant invoice",
-  auth: { public: true }, rateLimit: { limit: 120, windowMs: 60_000 },
+  auth: { public: true }, rateLimit: { limit: 60, windowMs: 60_000 },
   handler: async (ctx) => {
     const { order, business, settings } = await publicOrder(ctx.params.token);
     if (order.status !== "PAID") throw notFound("Invoice");

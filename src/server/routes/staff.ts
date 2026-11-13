@@ -154,6 +154,7 @@ route({
 
 route({
   method: "POST", path: "/:product/staff/employees/:id/photo", tag: "staff", summary: "Upload employee photograph (PNG/JPEG, max 2 MB)", auth: EMP_WRITE, multipart: true,
+  rateLimit: { limit: 20, windowMs: 60 * 60_000, by: "user" },
   handler: async (ctx) => {
     const e = await loadEmployee(ctx, ctx.params.id);
     const key = await saveImage(ctx.tenantId, "employees", ctx.form!.get("file") as File | null);

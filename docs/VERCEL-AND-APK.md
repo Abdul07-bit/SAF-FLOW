@@ -64,6 +64,14 @@ npm run db:seed
 | `CASHFREE_CLIENT_ID` / `CASHFREE_CLIENT_SECRET` / `CASHFREE_ENV` | optional; `sandbox` for testing |
 
 5. **Settings → Git → Production Branch**: `main`.
+
+### Step 4a — Shared rate limits (free, 5 minutes, strongly recommended)
+Vercel runs several copies of the app at once. Upstash Redis lets all of them share the same "too many attempts" counters, so login and reset limits really work.
+
+1. In your Vercel project: **Storage → Create / Marketplace → Upstash (Redis)** → free plan → connect it to this project. Vercel adds the keys automatically (`KV_REST_API_URL` / `KV_REST_API_TOKEN`, or `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN`; either pair works).
+2. Redeploy.
+
+The SAF Admin → Security Center → Configuration checks shows **"Shared rate limiting" ✓** when it's active.
 6. **Deploy.** When it finishes, open the address and sign in as `saf@admin`.
 7. Supabase → **Authentication → URL Configuration**: Site URL = your address, and add the redirect URL `https://<your-address>/auth/callback`.
 
@@ -105,3 +113,5 @@ Open the link in Chrome → **Download APK** → open the file → if Android as
 | Login works but photos/logos fail | Bucket name, endpoint or keys wrong, or the bucket isn't `saf-files` |
 | App opens with a browser bar on top | `ANDROID_PACKAGE_NAME` / `ANDROID_CERT_SHA256` not set, or not redeployed |
 | Two-step verification says "not configured" | `SAF_APP_SECRET` missing |
+| Security Center: "Rate limits are not shared between servers" | Do step 4a (Upstash) |
+| App won't start: "REFUSING TO START … development default" | A database or storage password is still the sample value: set the real one |

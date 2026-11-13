@@ -29,14 +29,14 @@ const ACTION_LABEL: Record<string, string> = {
   "auth.login_blocked_locked": "Sign-in while locked", "auth.mfa_failed": "Wrong 2-step code", "auth.step_up_failed": "Failed re-authentication",
   "auth.logout": "Signed out", "auth.logout_all": "Signed out everywhere", "auth.password_changed": "Password changed",
   "auth.password_reset_completed": "Password reset", "auth.mfa_enabled": "2-step verification on", "auth.mfa_disabled": "2-step verification off",
-  "auth.mfa_recovery_code_used": "Recovery code used", "auth.step_up": "Re-authenticated", "security.access_denied": "Access denied",
+  "auth.mfa_recovery_code_used": "Recovery code used", "auth.step_up": "Re-authenticated", "security.access_denied": "Access denied", "security.rate_limited": "Too many requests (blocked)",
   "security.mfa_reset": "2-step verification reset", "security.sessions_revoked": "Signed out by admin", "security.session_revoked": "Device signed out",
   "team.user.create": "Staff login created", "team.user.invite": "Staff invited", "team.user.update": "Staff access changed",
   "team.user.enable": "Staff enabled", "team.user.disable": "Staff disabled", "team.user.reset_password": "Password reset by manager",
   "team.user.mfa_reset": "2-step verification reset", "billing.payment_amount_mismatch": "Payment amount mismatch",
 };
 const label = (a: string) => ACTION_LABEL[a] ?? a;
-const BAD = new Set(["auth.login_failed", "auth.account_locked", "auth.login_blocked_locked", "auth.mfa_failed", "auth.step_up_failed", "security.access_denied", "billing.payment_amount_mismatch"]);
+const BAD = new Set(["security.rate_limited", "auth.login_failed", "auth.account_locked", "auth.login_blocked_locked", "auth.mfa_failed", "auth.step_up_failed", "security.access_denied", "billing.payment_amount_mismatch"]);
 
 // ===========================================================================
 // SAF platform

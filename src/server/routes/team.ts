@@ -11,6 +11,7 @@
  *  - a member whose role is not platform-wide can only assign within the
  *    businesses they are assigned to themselves.
  */
+import { logError } from "../core/log";
 import { z } from "zod";
 import { PRODUCT_CODES } from "@/config/catalog";
 import { ALL_PLATFORM_PERMISSIONS, PLATFORM_PERMISSIONS, SUPER_ADMIN_ROLE } from "@/config/platform";
@@ -203,6 +204,7 @@ route({
     roleCode: z.string().trim(),
     delivery: z.enum(["email", "link"]).default("email"),
   }),
+  rateLimit: { limit: 10, windowMs: 60 * 60_000, by: "user" },
   handler: async (ctx) => {
     const b = ctx.body;
     await assertCanUseRole(ctx, b.roleCode);
@@ -226,6 +228,7 @@ route({
   method: "POST", path: "/admin/team/:id/resend-invite", tag: "saf-team", summary: "Send a fresh invitation to a member who has not accepted yet",
   auth: { platform: "platform.staff.create", elevated: true },
   body: z.object({ delivery: z.enum(["email", "link"]).default("email") }),
+  rateLimit: { limit: 10, windowMs: 60 * 60_000, by: "user" },
   handler: async (ctx) => {
     const m = await loadMember(ctx, ctx.params.id);
     const r = await resendInvite(ctx.db, m.id, ctx.body.delivery);
@@ -309,7 +312,7 @@ route({
       await revokeUserSessions(ctx.db, m.id);
     }
     if (b.isActive !== undefined && m.authUserId && identity().adminConfigured()) {
-      await identity().setBanned(m.authUserId, !b.isActive).catch((e) => console.error("[team] identity ban sync failed", e));
+      await identity().setBanned(m.authUserId, !b.isActive).catch((e) => logError("team", "identity ban sync failed", e));
     }
     await ctx.audit(b.isActive === false ? "platform.staff.suspend" : b.isActive === true ? "platform.staff.reactivate" : "platform.staff.update",
       { type: "user", id: m.id }, {

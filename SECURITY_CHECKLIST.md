@@ -3,7 +3,7 @@
 Tick these before each production release, plus the "Go-live" section once. `[x]` means done and verified in this repository; `[ ]` needs action from someone with production or infrastructure access.
 
 ## Code-level controls (verified 2026-11-13, branch `security/hardening`)
-- [x] Every API route declares an auth policy; anonymous access is rejected on all non-public routes (automated test over all 221 routes)
+- [x] Every API route declares an auth policy; anonymous access is rejected on all non-public routes (automated test over all 318 endpoints)
 - [x] CSRF header required on every non-public state change (automated test over all routes)
 - [x] Tenant identity comes only from the server session; RLS forced on every tenant table; runtime role is not superuser and cannot bypass RLS
 - [x] Cross-tenant references blocked in the database (trigger on all 40 child tables; a test fails if a new table lacks it)
@@ -33,6 +33,7 @@ Tick these before each production release, plus the "Go-live" section once. `[x]
       (or turn the Data API off / remove `public` from its exposed schemas in the Supabase dashboard)
 - [ ] `TRUSTED_PROXY_HOPS` matches the real proxy chain (1 with the bundled nginx; 2 with a cloud load balancer in front of nginx; 0 if no proxy)
 - [ ] `SAF_MFA_REQUIRED=platform,owners` (or stricter); every SAF Team member has enrolled MFA (Security Center shows N/N)
+- [ ] Upstash Redis connected (Security Center → "Shared rate limiting" ✓) when hosting on Vercel or several servers
 - [ ] `npm run security:preflight` passes with the production environment loaded
 - [ ] `CASHFREE_ENV=production` with live keys; webhook URL configured in the Cashfree dashboard as `https://<host>/api/webhooks/cashfree`
 - [ ] `STORAGE_DRIVER=s3` with a **private** bucket (no public-read policy)

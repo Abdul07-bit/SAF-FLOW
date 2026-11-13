@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { assertPublicLinkFresh } from "../core/public-links";
 import type { BillMovementType, Prisma } from "@prisma/client";
 import { addDays, endOfDayIST, financialYear, istDate, istMinutes, startOfDayIST, todayIST } from "@/lib/dates";
 import { computeTotals } from "@/lib/money";
@@ -634,12 +635,13 @@ route({
 
 route({
   method: "GET", path: "/public/invoice/bill/:token", tag: "public", summary: "Printable retail invoice",
-  auth: { public: true }, rateLimit: { limit: 120, windowMs: 60_000 },
+  auth: { public: true }, rateLimit: { limit: 60, windowMs: 60_000 },
   handler: async (ctx) => {
     const ref = await withPlatform((db) => db.billSale.findUnique({ where: { publicToken: ctx.params.token }, select: { id: true, tenantId: true } }));
     if (!ref) throw notFound("Invoice");
     return withTenant(ref.tenantId, async (db) => {
       const s = await db.billSale.findUniqueOrThrow({ where: { id: ref.id }, include: saleInclude });
+      assertPublicLinkFresh(s.createdAt);
       const business = await db.business.findUniqueOrThrow({ where: { tenantId: ref.tenantId } });
       const settings = await getProductSettings(db, ref.tenantId, "bill");
       return {

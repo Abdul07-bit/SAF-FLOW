@@ -6,7 +6,7 @@
 
 | Check | Tool | Result |
 |---|---|---|
-| Unit + integration tests | Vitest 4.1.12 | **114 passed, 0 failed**, 2 marked not applicable (11 files, ~61 s) |
+| Unit + integration tests | Vitest 4.1.12 | **125 passed, 0 failed**, 2 marked not applicable (11 files). Was 114 before the pre-launch review; see §8 |
 | — of which baseline tests (before this work) | | 85/85 passed at baseline; still pass (2 updated for the new generic sign-in error) |
 | — of which new security tests | | 29 new (`tests/unit/security.test.ts` 11, `tests/integration/security.test.ts` 18) plus a rewritten Cashfree webhook test |
 | Type check | `tsc --noEmit` | pass |
@@ -48,7 +48,7 @@
 ## 3. Authentication and authorization
 | Area | Tests | Result |
 |---|---|---|
-| Anonymous access | All 221 routes: every non-public route → 401 before validation | pass |
+| Anonymous access | All 318 endpoints: every non-public route → 401 before validation | pass |
 | CSRF | Every non-public state-changing route without `x-saf-request` → 403 `CSRF_REJECTED` | pass |
 | Sessions | Expired, revoked and >7-day-old sessions → 401; logout and logout-all revoke server-side | pass |
 | Lockout and enumeration | Generic error for unknown, wrong, locked and pending accounts; lock after 5 failures | pass |
@@ -85,7 +85,29 @@
 | `js-open-redirect` | `src/app/login/page.tsx` | False positive: `next` is only followed when it matches `^/(?!/)[\w\-/[\].]*$` (same-site path, no `//`, no `\`). |
 | Partial parsing (4 files) | `satisfies` syntax in 3 route files, a shell heredoc | Semgrep parser limits; the rest of each file was analysed. CodeQL covers TypeScript fully in CI. |
 
-## 7. How to reproduce
+## 8. Pre-launch review additions (11 new tests)
+| Test | Proves | Result |
+|---|---|---|
+| unknown fields / query params / no-body / settings keys | `400 UNKNOWN_FIELDS`; malformed ids → 404; permission errors carry no internal keys | pass |
+| login limits (live limiter) | 5/min per IP → the 6th is 429 with `Retry-After`; logged as `security.rate_limited`; 10/15 min per account across many IPs → the 11th is 429; password reset answers identically past its per-email limit | pass |
+| invoice link expiry | 200 when fresh; `410 LINK_EXPIRED` after 90 days | pass |
+| image re-encoding | data appended to a PNG and EXIF GPS in a JPEG are gone; a 100000×100000 "bomb" header is refused | pass |
+| log redaction | emails, phones, JWTs, `password`/`token` values masked | pass |
+| 500 response | only a friendly message plus a reference; no path, IP or email | pass |
+| unknown-key detection, link-expiry helper | unit level | pass |
+
+**Not executed:** the Upstash (shared counter) path needs your Upstash account. The fallback in-memory limiter is what the tests exercise. Check the live one after step 4a of `docs/VERCEL-AND-APK.md` (§9).
+
+## 9. How to test the pre-launch fixes yourself (after deploying)
+1. **Rate limit:** on the login page, enter a wrong password 6 times within a minute. The 6th answer is "Too many attempts. Please wait a little and try again." SAF Admin → Security Center → Security events shows "Too many requests (blocked)".
+2. **Unknown fields:** in a terminal: `curl -s -X POST https://<site>/api/auth/login -H "content-type: application/json" -d '{"username":"x","password":"y","isAdmin":true}'` → `UNKNOWN_FIELDS`.
+3. **Errors:** open `https://<site>/this-does-not-exist`. You get the branded "Page not found" page, with no framework details.
+4. **Uploads:** upload a phone photo as an employee photo, download it with right-click → Save, and check its properties. There's no GPS location.
+5. **Invoice links:** links older than 90 days show "This link has expired".
+6. **Secrets:** `docker run --rm -v "$PWD:/repo" zricethezav/gitleaks:v8.21.2 detect --source /repo` → no leaks. The GitHub "gitleaks" action shows green.
+7. **Access control:** sign in as a staff member of business A, copy a record's URL from business B's account, and open it. You get "not found".
+
+## 10. How to reproduce
 ```bash
 npm run db:up                      # PostgreSQL on :5433 (Docker)
 npm test                           # everything (114 tests)
