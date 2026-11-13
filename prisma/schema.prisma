@@ -77,7 +77,8 @@ enum PaymentMethod {
   CARD
   BANK_TRANSFER
   CHEQUE
-  RAZORPAY
+  RAZORPAY // legacy: before SAF Flow moved to Cashfree
+  CASHFREE
   OTHER
 }
 

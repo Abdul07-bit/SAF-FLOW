@@ -10,8 +10,9 @@ import { registerCrud } from "../http/crud";
 import { badRequest, conflict, notFound } from "../http/errors";
 import { nextSeq, withPlatform, type Tx } from "../db";
 import { token } from "../core/ids";
-import { fileUrl, saveImage } from "../core/storage";
+import { fileUrl, saveImage, storage } from "../core/storage";
 import { renderIdCards, type CardData } from "../staff/idcard-pdf";
+import { brandHexFromLogo } from "../staff/logo-colour";
 import { shifts } from "@/shared/resources";
 
 const isoDate = z.string().refine(isISODate, "Use YYYY-MM-DD");
@@ -381,9 +382,12 @@ route({
 
 async function cardData(ctx: Ctx, cards: { cardNumber: string; validUntil: Date; employee: any }[]): Promise<CardData[]> {
   const business = await ctx.db.business.findUniqueOrThrow({ where: { tenantId: ctx.tenantId } });
+  // Cards wear the shop's own colour (taken from its logo); SAF colour only when there is no usable logo.
+  const logo = business.logoKey ? await storage().get(business.logoKey) : null;
+  const brandHex = (logo && brandHexFromLogo(logo.body, logo.contentType)) || PRODUCTS[ctx.product].theme.brand;
   return cards.map((c) => ({
     businessName: business.name, businessPhone: business.phone, businessAddress: [business.address, business.city].filter(Boolean).join(", ") || null,
-    logoKey: business.logoKey, brandHex: PRODUCTS[ctx.product].theme.brand,
+    logoKey: business.logoKey, brandHex,
     employeeName: c.employee.fullName, employeeCode: c.employee.employeeCode, designation: c.employee.designation,
     department: c.employee.department, bloodGroup: c.employee.bloodGroup, photoKey: c.employee.photoKey,
     cardNumber: c.cardNumber, validUntil: c.validUntil, verifyUrl: verifyUrl(c.employee.qrToken),

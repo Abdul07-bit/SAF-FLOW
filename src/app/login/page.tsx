@@ -1,5 +1,6 @@
 "use client";
 
+import { SafLogo } from "@/components/brand";
 import { useState } from "react";
 import { BedDouble, ScanBarcode, ShieldCheck, UtensilsCrossed } from "lucide-react";
 import { PRODUCT_LIST } from "@/config/catalog";
@@ -34,7 +35,7 @@ export default function LoginPage() {
     <div className="grid min-h-screen lg:grid-cols-[1.1fr_1fr]">
       <section className="relative hidden flex-col justify-between bg-sidebar p-10 text-white lg:flex">
         <div className="flex items-center gap-3">
-          <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-white/15 text-sm font-bold">SAF</span>
+          <SafLogo tone="light" className="h-10" decorative />
           <span className="text-lg font-semibold tracking-tight">SAF Flow</span>
         </div>
         <div>
@@ -61,7 +62,7 @@ export default function LoginPage() {
       <main className="flex items-center justify-center p-6">
         <form onSubmit={submit} className="w-full max-w-sm">
           <div className="mb-6 flex items-center gap-2 lg:hidden">
-            <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-brand text-xs font-bold text-brand-ink">SAF</span>
+            <SafLogo className="h-9" decorative />
             <span className="text-base font-semibold">SAF Flow</span>
           </div>
           <h2 className="text-2xl font-semibold tracking-tight text-slate-900">Sign in</h2>

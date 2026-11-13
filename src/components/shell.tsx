@@ -8,6 +8,7 @@ import type { NavItem, NavSection } from "@/config/nav";
 import { fmtDateTime } from "@/lib/dates";
 import { api, useApi } from "@/lib/client";
 import { cx } from "./ui";
+import { SafLogo } from "./brand";
 
 export function themeVars(t: ProductTheme): CSSProperties {
   return {
@@ -147,7 +148,7 @@ export function Shell({ theme, appName, appTag, base, sections, activeSlug, top,
 
   const brand = (
     <div className="flex items-center gap-2.5 border-b border-white/10 px-4 py-3.5">
-      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-white/15 text-xs font-bold tracking-tight text-white" aria-hidden>SAF</span>
+      <SafLogo tone="light" className="h-7" decorative />
       <span className="min-w-0">
         <span className="block truncate text-sm font-semibold text-white">{appName}</span>
         <span className="block truncate text-[11px] text-sidebar-muted">{appTag}</span>

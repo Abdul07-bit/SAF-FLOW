@@ -90,7 +90,7 @@ plan, billing cycle, start date and expiry.
   the subscription's grace days) -> `EXPIRED`; plus `SUSPENDED` and `CANCELLED`.
 - **Invoices** are raised for setup fees, each billing period, plan-change
   differences and one-off charges, with GST from global settings. Payments are
-  recorded manually by the Super Admin or collected online through Razorpay.
+  recorded manually by the Super Admin or collected online through Cashfree.
 - **Renewal job** (every 6 hours in Docker, or `npm run jobs:renewals`): expires
   subscriptions past grace, raises the next renewal invoice, and sends reminders
   on the configured days before expiry. Paying a renewal invoice extends the

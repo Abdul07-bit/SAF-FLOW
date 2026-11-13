@@ -152,7 +152,7 @@ export async function loadProductAccess(db: Tx, user: SessionUser, product: Prod
 export function assertProductUsable(access: ProductAccess, opts: { allowInactive?: boolean } = {}) {
   const name = PRODUCTS[access.product].name;
   if (access.tenantStatus !== "ACTIVE")
-    throw forbidden("TENANT_SUSPENDED", "This business account is suspended. Please contact SMARTAUTO FLEX support.");
+    throw forbidden("TENANT_SUSPENDED", "This business account is suspended. Please contact SmartAutoFlex support.");
   if (!access.productActive) throw forbidden("PRODUCT_DISABLED", `${name} is temporarily unavailable.`);
   if (!access.subscription)
     throw forbidden("PRODUCT_NOT_SUBSCRIBED", `Your business has not subscribed to ${name}.`, { product: access.product });

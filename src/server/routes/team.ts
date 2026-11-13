@@ -18,10 +18,10 @@ import { route, type Ctx } from "../http/router";
 import { badRequest, conflict, forbidden, HttpError, notFound } from "../http/errors";
 import type { Tx } from "../db";
 import { revokeUserSessions } from "../auth/session";
-import { authCallbackUrl, identity, identityToHttp, IdentityError } from "../auth/identity";
+import { identity } from "../auth/identity";
+import { inviteAccount, resendInvite } from "../core/invitations";
 import type { PlatformScope } from "../core/platform-scope";
 
-const INVITE_DAYS = 7;
 const permKey = z.string().refine((k) => (ALL_PLATFORM_PERMISSIONS as string[]).includes(k), "Unknown platform permission");
 
 function assertCanGrant(scope: PlatformScope, perms: readonly string[]) {
@@ -57,25 +57,6 @@ async function loadMember(ctx: Ctx, id: string) {
 
 function assertNotSelf(ctx: Ctx, id: string, what: string) {
   if (id === ctx.user.id) throw badRequest(`You cannot change your own ${what}.`);
-}
-
-/** Creates the Supabase identity and the invitation link / email. */
-async function sendInvite(email: string, delivery: "email" | "link", data: Record<string, unknown>) {
-  const idp = identity();
-  if (!idp.adminConfigured())
-    throw new HttpError(503, "IDENTITY_NOT_CONFIGURED",
-      "Email invitations are awaiting Supabase credentials (SUPABASE_SECRET_KEY). See docs/DEPLOYMENT.md.");
-  if (delivery === "email") {
-    try {
-      const user = await idp.inviteUser(email, authCallbackUrl(), data);
-      return { authUserId: user.id, delivery: "email" as const, link: null };
-    } catch (e) {
-      // The identity already exists (e.g. an earlier attempt): hand out a link instead.
-      if (!(e instanceof IdentityError && e.code === "IDENTITY_EXISTS")) identityToHttp(e);
-    }
-  }
-  const r = await idp.generateInviteLink(email, authCallbackUrl(), data).catch(identityToHttp);
-  return { authUserId: r.user.id, delivery: "link" as const, link: r.link };
 }
 
 const memberView = (u: any) => ({
@@ -225,30 +206,14 @@ route({
   handler: async (ctx) => {
     const b = ctx.body;
     await assertCanUseRole(ctx, b.roleCode);
-    const clash = await ctx.db.user.findFirst({
-      where: { OR: [{ username: b.email }, { authUserId: { not: null }, email: { equals: b.email, mode: "insensitive" } }] },
-    });
-    if (clash) throw conflict("A SAF Flow account already uses this email.");
     if (await ctx.db.platformStaffProfile.findUnique({ where: { employeeCode: b.employeeCode } }))
       throw conflict(`Employee ID ${b.employeeCode} is already in use.`);
-
-    const sent = await sendInvite(b.email, b.delivery, { full_name: b.fullName, saf_kind: "platform" });
-    if (await ctx.db.user.findUnique({ where: { authUserId: sent.authUserId } }))
-      throw conflict("This email's sign-in account is already linked to another SAF Flow user.");
-
-    const user = await ctx.db.user.create({
-      data: {
-        kind: "PLATFORM", username: b.email, email: b.email, authUserId: sent.authUserId, fullName: b.fullName,
-        phone: b.phone || null, platformRole: b.roleCode, isActive: false, mustChangePassword: false,
-        staffProfile: { create: { employeeCode: b.employeeCode, department: b.department || null, designation: b.designation || null } },
-      },
+    const { user, delivery, link } = await inviteAccount(ctx.db, {
+      email: b.email, fullName: b.fullName, phone: b.phone, kind: "PLATFORM", tenantId: null, platformRole: b.roleCode,
+      delivery: b.delivery, invitedById: ctx.user.id,
+      extra: { staffProfile: { create: { employeeCode: b.employeeCode, department: b.department || null, designation: b.designation || null } } },
     });
-    await ctx.db.invitation.create({
-      data: {
-        userId: user.id, email: b.email, delivery: sent.delivery, invitedById: ctx.user.id,
-        expiresAt: new Date(Date.now() + INVITE_DAYS * 86_400_000),
-      },
-    });
+    const sent = { delivery, link };
     await ctx.audit("platform.staff.invite", { type: "user", id: user.id }, {
       email: b.email, role: b.roleCode, employeeCode: b.employeeCode, delivery: sent.delivery,
     });
@@ -263,17 +228,8 @@ route({
   body: z.object({ delivery: z.enum(["email", "link"]).default("email") }),
   handler: async (ctx) => {
     const m = await loadMember(ctx, ctx.params.id);
-    const pending = await ctx.db.invitation.findFirst({ where: { userId: m.id, status: "PENDING" } });
-    if (!pending) throw badRequest("This member has already accepted their invitation.");
-    // A second invite email cannot be sent to an existing identity, so resends use a fresh link.
-    const delivery = ctx.body.delivery;
-    const r = delivery === "email"
-      ? await identity().sendRecovery(m.email!, authCallbackUrl()).then(() => ({ link: null }), identityToHttp)
-      : await identity().generateInviteLink(m.email!, authCallbackUrl(), {}).catch(identityToHttp);
-    await ctx.db.invitation.update({
-      where: { id: pending.id },
-      data: { delivery, sentAt: new Date(), expiresAt: new Date(Date.now() + INVITE_DAYS * 86_400_000) },
-    });
+    const r = await resendInvite(ctx.db, m.id, ctx.body.delivery);
+    const delivery = r.delivery;
     await ctx.audit("platform.staff.invite_resent", { type: "user", id: m.id }, { delivery });
     return { ok: true, delivery, inviteLink: r.link };
   },
@@ -458,4 +414,28 @@ route({
     permissions: ctx.platform.permissions,
     assignedBusinesses: ctx.platform.allTenants ? null : [...ctx.platform.assignments.keys()],
   }),
+});
+
+route({
+  method: "GET", path: "/admin/businesses/:id/team", tag: "saf-team", summary: "SAF Team members assigned to a business",
+  auth: { platform: "platform.business.read", target: "business" },
+  handler: async (ctx) => {
+    // Assignments are only readable in the bypass scope; the target check above
+    // already proved the caller may see this business.
+    const { withPlatform } = await import("../db");
+    return withPlatform(async (db) => {
+      const rows = await db.staffAssignment.findMany({
+        where: { tenantId: ctx.params.id, isActive: true, revokedAt: null },
+        include: {
+          user: { select: { id: true, fullName: true, email: true, isActive: true, platformRoleRef: { select: { name: true } }, invitations: { where: { status: "PENDING" }, select: { id: true }, take: 1 } } },
+          modules: { select: { productCode: true } }, branches: { select: { branchId: true } }, permissions: { select: { permissionKey: true } },
+        },
+        orderBy: { createdAt: "asc" },
+      });
+      return rows.map((a) => ({
+        memberId: a.user.id, fullName: a.user.fullName, email: a.user.email, isActive: a.user.isActive, invitePending: a.user.invitations.length > 0, role: a.user.platformRoleRef?.name ?? null,
+        products: a.modules.map((m) => m.productCode), branchCount: a.branches.length, narrowed: a.permissions.length > 0, since: a.createdAt,
+      }));
+    });
+  },
 });

@@ -16,7 +16,7 @@ SAF Flow builds on an existing working codebase (previously branded
 SMARTAUTO FLEX). It already provided:
 
 - Multi-tenant PostgreSQL with Row-Level Security (RLS).
-- Super Admin onboarding, plans and pricing, subscriptions and Razorpay.
+- Super Admin onboarding, plans and pricing, subscriptions and Cashfree online payments.
 - All three products with staff, roles and attendance.
 - An automated test suite.
 
@@ -60,12 +60,12 @@ flowchart LR
   end
   SB[(Supabase<br/>Postgres + Auth)]
   R2[(Cloudflare R2<br/>files)]
-  RZ[Razorpay]
+  CFP[Cashfree Payments]
   A & C & Q --> CF --> N --> APP
   APP -- saf_app role, RLS --> SB
   APP -- Auth REST, secret key server-side only --> SB
   APP --> R2
-  APP <--> RZ
+  APP <--> CFP
 ```
 
 The server is a **modular monolith**. Every module registers its routes with
@@ -294,11 +294,11 @@ All tenant-owned tables carry `tenant_id` (and `branch_id` where it applies), UU
 | Phase | Scope | Status |
 |---|---|---|
 | 1 Foundation | Supabase identity, invitations, reset, platform RBAC, SAF Team scoping in RLS, branch restriction, Supabase API lockdown, tests, this document | **Done**: backend complete. The SAF Team admin screens are Phase 3. |
-| 2 Super Admin | 6-step onboarding wizard (branches, owner **invitation** instead of temp password, trial, limits); business-type / module registry; system health; permission-aware admin navigation | Next |
-| 3 SAF Team UI | Team list, invite, profile, assignments editor (branches / modules / permissions), role editor, activity view | |
+| 2 Super Admin | Onboarding wizard (business type, products and plans, branches, owner **invitation** or login ID, SAF Team assignment), all in one transaction; business-type registry (`BUSINESS_TYPES` in `src/config/catalog.ts`: recommended products, branch wording); system health (`/admin/system`); permission-aware admin navigation | **Done** |
+| 3 SAF Team UI | Team list, invite, profile, assignments editor (branches / modules / permissions), role editor, activity view | **Done** (`src/screens/admin-team.tsx`) |
 | 4 Customer platform | Owner invites staff by email; branch restriction UI; custom customer roles; organization dashboard | |
 | 5 Business modules | Bill returns/refunds, Dine customers & expenses, shared inventory/billing consolidation | |
-| 6 Integrations | Supabase Realtime (tenant-scoped channels), email (SMTP via Supabase / Resend), WhatsApp Cloud API, Razorpay live keys | |
+| 6 Integrations | Supabase Realtime (tenant-scoped channels), email (SMTP via Supabase / Resend), WhatsApp Cloud API, Cashfree live keys and domain whitelisting | |
 | 7 Quality & deploy | MFA (TOTP), dark mode, GitHub Actions CI, staging + production on Supabase, Cloudflare, backups/monitoring (Sentry), performance and security testing | |
 
 ---

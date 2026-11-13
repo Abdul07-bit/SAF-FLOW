@@ -1,7 +1,7 @@
 {
   "openapi": "3.1.0",
   "info": {
-    "title": "SMARTAUTO FLEX API",
+    "title": "SAF Flow API",
     "version": "1.0.0",
     "description": "Multi-tenant API for SAF Super Admin, SAF Dine Flow, SAF Stay Flow and SAF Bill Flow. Authenticate with POST /api/auth/login (sets the HttpOnly `saf_session` cookie). Every protected endpoint enforces tenant isolation (PostgreSQL RLS), subscription state, plan entitlements and role permissions server-side."
   },
@@ -25,61 +25,9 @@
     }
   ],
   "paths": {
-    "/api/{product}/billing/invoices/{id}/checkout": {
+    "/api/{product}/billing/cashfree/confirm": {
       "post": {
-        "summary": "Start an online (Razorpay) payment for a SAF invoice",
-        "description": "**Authorization:** Tenant user of the product in the URL with a usable subscription (expired/suspended allowed); role permission: subscription.view.\n\nMutations require header `x-saf-request: 1` (CSRF guard).",
-        "tags": [
-          "billing"
-        ],
-        "parameters": [
-          {
-            "name": "product",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success"
-          },
-          "400": {
-            "description": "Validation error"
-          },
-          "401": {
-            "description": "Not signed in"
-          },
-          "402": {
-            "description": "Subscription expired"
-          },
-          "403": {
-            "description": "Not permitted (plan feature, role permission, tenant suspended...)"
-          },
-          "404": {
-            "description": "Not found"
-          }
-        },
-        "x-saf-auth": {
-          "product": ":product",
-          "permission": "subscription.view",
-          "allowInactive": true
-        }
-      }
-    },
-    "/api/{product}/billing/razorpay/verify": {
-      "post": {
-        "summary": "Confirm a Razorpay checkout (signature verified server-side)",
+        "summary": "Confirm a Cashfree checkout: the server reads the order from Cashfree and settles it when PAID",
         "description": "**Authorization:** Tenant user of the product in the URL with a usable subscription (expired/suspended allowed); role permission: subscription.view.\n\nMutations require header `x-saf-request: 1` (CSRF guard).",
         "tags": [
           "billing"
@@ -129,25 +77,69 @@
                 "properties": {
                   "orderId": {
                     "type": "string",
-                    "maxLength": 60
-                  },
-                  "paymentId": {
-                    "type": "string",
-                    "maxLength": 60
-                  },
-                  "signature": {
-                    "type": "string",
-                    "maxLength": 200
+                    "minLength": 3,
+                    "maxLength": 45,
+                    "pattern": "^[A-Za-z0-9_-]+$"
                   }
                 },
                 "required": [
-                  "orderId",
-                  "paymentId",
-                  "signature"
+                  "orderId"
                 ]
               }
             }
           }
+        }
+      }
+    },
+    "/api/{product}/billing/invoices/{id}/checkout": {
+      "post": {
+        "summary": "Start an online (Cashfree) payment for a SAF invoice",
+        "description": "**Authorization:** Tenant user of the product in the URL with a usable subscription (expired/suspended allowed); role permission: subscription.view.\n\nMutations require header `x-saf-request: 1` (CSRF guard).",
+        "tags": [
+          "billing"
+        ],
+        "parameters": [
+          {
+            "name": "product",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "402": {
+            "description": "Subscription expired"
+          },
+          "403": {
+            "description": "Not permitted (plan feature, role permission, tenant suspended...)"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        },
+        "x-saf-auth": {
+          "product": ":product",
+          "permission": "subscription.view",
+          "allowInactive": true
         }
       }
     },
@@ -3212,6 +3204,14 @@
                     "minLength": 2,
                     "maxLength": 100
                   },
+                  "signIn": {
+                    "default": "login_id",
+                    "type": "string",
+                    "enum": [
+                      "login_id",
+                      "email"
+                    ]
+                  },
                   "handle": {
                     "type": "string"
                   },
@@ -3222,6 +3222,14 @@
                   "email": {
                     "type": "string",
                     "maxLength": 120
+                  },
+                  "delivery": {
+                    "default": "email",
+                    "type": "string",
+                    "enum": [
+                      "email",
+                      "link"
+                    ]
                   },
                   "access": {
                     "minItems": 1,
@@ -3268,7 +3276,6 @@
                 },
                 "required": [
                   "fullName",
-                  "handle",
                   "access"
                 ]
               }
@@ -3402,6 +3409,79 @@
                       "format": "uuid",
                       "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
                     }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/{product}/team/{userId}/resend-invite": {
+      "post": {
+        "summary": "Send a fresh invitation to a staff member who has not accepted yet",
+        "description": "**Authorization:** Tenant user of the product in the URL with a usable subscription; plan feature: staff_logins; role permission: staff.manage.\n\nMutations require header `x-saf-request: 1` (CSRF guard).",
+        "tags": [
+          "team"
+        ],
+        "parameters": [
+          {
+            "name": "product",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "userId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "402": {
+            "description": "Subscription expired"
+          },
+          "403": {
+            "description": "Not permitted (plan feature, role permission, tenant suspended...)"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        },
+        "x-saf-auth": {
+          "product": ":product",
+          "feature": "staff_logins",
+          "permission": "staff.manage"
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "delivery": {
+                    "default": "email",
+                    "type": "string",
+                    "enum": [
+                      "email",
+                      "link"
+                    ]
                   }
                 }
               }
@@ -3951,13 +4031,79 @@
                       "CARD",
                       "BANK_TRANSFER",
                       "CHEQUE",
-                      "RAZORPAY",
+                      "CASHFREE",
                       "OTHER"
                     ]
                   },
                   "paymentReference": {
                     "type": "string",
                     "maxLength": 100
+                  },
+                  "branches": {
+                    "default": [],
+                    "maxItems": 20,
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "name": {
+                          "type": "string",
+                          "minLength": 2,
+                          "maxLength": 80
+                        },
+                        "code": {
+                          "type": "string",
+                          "pattern": "^[A-Z0-9]{2,12}$"
+                        },
+                        "address": {
+                          "type": "string",
+                          "maxLength": 300
+                        },
+                        "phone": {
+                          "type": "string",
+                          "maxLength": 20
+                        }
+                      },
+                      "required": [
+                        "name",
+                        "code"
+                      ]
+                    }
+                  },
+                  "owner": {
+                    "default": {
+                      "method": "login_id",
+                      "delivery": "email"
+                    },
+                    "type": "object",
+                    "properties": {
+                      "method": {
+                        "default": "login_id",
+                        "type": "string",
+                        "enum": [
+                          "invite",
+                          "login_id"
+                        ]
+                      },
+                      "delivery": {
+                        "default": "email",
+                        "type": "string",
+                        "enum": [
+                          "email",
+                          "link"
+                        ]
+                      }
+                    }
+                  },
+                  "assignStaffIds": {
+                    "default": [],
+                    "maxItems": 20,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    }
                   }
                 },
                 "required": [
@@ -4427,7 +4573,7 @@
                       "CARD",
                       "BANK_TRANSFER",
                       "CHEQUE",
-                      "RAZORPAY",
+                      "CASHFREE",
                       "OTHER"
                     ]
                   },
@@ -4514,6 +4660,49 @@
               }
             }
           }
+        }
+      }
+    },
+    "/api/admin/businesses/{id}/team": {
+      "get": {
+        "summary": "SAF Team members assigned to a business",
+        "description": "**Authorization:** SAF Super Admin only.",
+        "tags": [
+          "saf-team"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "402": {
+            "description": "Subscription expired"
+          },
+          "403": {
+            "description": "Not permitted (plan feature, role permission, tenant suspended...)"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        },
+        "x-saf-auth": {
+          "platform": "platform.business.read",
+          "target": "business"
         }
       }
     },
@@ -5203,7 +5392,7 @@
                 "CARD",
                 "BANK_TRANSFER",
                 "CHEQUE",
-                "RAZORPAY",
+                "CASHFREE",
                 "OTHER"
               ]
             }
@@ -5306,7 +5495,7 @@
                       "CARD",
                       "BANK_TRANSFER",
                       "CHEQUE",
-                      "RAZORPAY",
+                      "CASHFREE",
                       "OTHER"
                     ]
                   },
@@ -6342,7 +6531,7 @@
                           "CARD",
                           "BANK_TRANSFER",
                           "CHEQUE",
-                          "RAZORPAY",
+                          "CASHFREE",
                           "OTHER"
                         ]
                       },
@@ -6657,6 +6846,39 @@
               }
             }
           }
+        }
+      }
+    },
+    "/api/admin/system/health": {
+      "get": {
+        "summary": "System health: database, identity, storage, jobs and integrations",
+        "description": "**Authorization:** SAF Super Admin only.",
+        "tags": [
+          "admin"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "402": {
+            "description": "Subscription expired"
+          },
+          "403": {
+            "description": "Not permitted (plan feature, role permission, tenant suspended...)"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        },
+        "x-saf-auth": {
+          "platform": "platform.settings.read"
         }
       }
     },
@@ -19857,9 +20079,9 @@
         }
       }
     },
-    "/api/webhooks/razorpay": {
+    "/api/webhooks/cashfree": {
       "post": {
-        "summary": "Razorpay webhook (payment.captured / order.paid)",
+        "summary": "Cashfree payment webhook (PAYMENT_SUCCESS_WEBHOOK)",
         "description": "**Authorization:** Public (no session).",
         "tags": [
           "billing"

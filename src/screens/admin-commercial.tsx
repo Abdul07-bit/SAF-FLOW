@@ -302,7 +302,7 @@ function PaymentsTable() {
       <div className="no-print mb-4 flex flex-wrap items-center gap-2">
         <SearchBox value={q} onChange={setQ} placeholder="Business or reference" label="Search payments" />
         <Select aria-label="Method" className="w-40" value={method} onChange={(e) => setMethod(e.target.value)}>
-          <option value="">Any method</option>{[...PAYMENT_METHODS, "RAZORPAY"].map((m) => <option key={m} value={m}>{humanize(m)}</option>)}
+          <option value="">Any method</option>{[...PAYMENT_METHODS, "CASHFREE"].map((m) => <option key={m} value={m}>{humanize(m)}</option>)}
         </Select>
         <Input aria-label="From date" type="date" className="w-40" value={from} max={to || undefined} onChange={(e) => setFrom(e.target.value)} />
         <span className="text-sm text-slate-500">to</span>

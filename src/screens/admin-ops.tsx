@@ -240,7 +240,7 @@ function Flag({ ok, children }: { ok: boolean; children: React.ReactNode }) {
 }
 
 export function AdminSettings() {
-  const data = useApi<{ settings: Settings; integrations: { razorpay: boolean; storage: string; appUrl: string; cronConfigured: boolean } }>("/admin/settings");
+  const data = useApi<{ settings: Settings; integrations: { cashfree: boolean; cashfreeMode: "sandbox" | "production"; storage: string; appUrl: string; cronConfigured: boolean } }>("/admin/settings");
   const [form, setForm] = useState<Record<string, string | boolean> | null>(null);
   const [busy, run] = useAction();
   const [jobBusy, runJob] = useAction();
@@ -311,12 +311,12 @@ export function AdminSettings() {
             <div className="space-y-4">
               <Card title="Integrations" subtitle="Configured through environment variables on the server.">
                 <ul className="space-y-2 text-sm text-slate-800">
-                  <li><Flag ok={d.integrations.razorpay}>Razorpay online payments {d.integrations.razorpay ? "configured" : "not configured"}</Flag></li>
+                  <li><Flag ok={d.integrations.cashfree}>Cashfree online payments {d.integrations.cashfree ? `configured (${d.integrations.cashfreeMode})` : "not configured"}</Flag></li>
                   <li><Flag ok={d.integrations.cronConfigured}>Scheduled renewal job {d.integrations.cronConfigured ? "secured" : "secret not set"}</Flag></li>
                   <li><Flag ok>File storage: {d.integrations.storage}</Flag></li>
                   <li><Flag ok={!!d.integrations.appUrl}>Public URL: <span className="font-mono text-[13px]">{d.integrations.appUrl || "not set"}</span></Flag></li>
                 </ul>
-                {!d.integrations.razorpay && form.onlinePayments && <div className="mt-3"><Notice tone="warn">Online payments are switched on but Razorpay keys are missing, so businesses see manual payment instructions.</Notice></div>}
+                {!d.integrations.cashfree && form.onlinePayments && <div className="mt-3"><Notice tone="warn">Online payments are switched on but Cashfree keys are missing, so businesses see manual payment instructions.</Notice></div>}
               </Card>
               <Card title="Renewal job" subtitle="Runs automatically every 6 hours in the Docker deployment.">
                 <p className="text-sm text-slate-600">Expires lapsed subscriptions after their grace period, applies scheduled plan changes, raises renewal invoices and sends reminders.</p>
@@ -325,6 +325,90 @@ export function AdminSettings() {
               <Card title="API documentation">
                 <p className="text-sm text-slate-600">OpenAPI 3.1 description generated from the live route registry, including each endpoint&apos;s authorization policy.</p>
                 <a className={`mt-2 inline-block text-sm ${linkCls}`} href="/api/docs/openapi.json" target="_blank" rel="noreferrer">Open openapi.json</a>
+              </Card>
+            </div>
+          </div>
+        )}
+      </Loadable>
+    </>
+  );
+}
+
+type HealthStatus = "ok" | "warn" | "down";
+interface Health {
+  overall: HealthStatus;
+  checkedAt: string;
+  checks: Record<string, { status: HealthStatus; detail: string }>;
+  identityLatencyMs: number | null;
+  lastRenewalAt: string | null;
+  migrations: { count: number; latest: string | null; latestAt: string | null } | null;
+  runtime: { node: string; env: string; uptimeSec: number; rssMb: number; heapMb: number };
+  counts: { tenants: Record<string, number>; pendingInvites: number; expiredInvites: number; lockedUsers: number; liveSessions: number };
+}
+
+const CHECK_LABELS: Record<string, string> = {
+  database: "Database", identity: "Sign-in service (Supabase Auth)", storage: "File storage", renewals: "Renewal job", payments: "Online payments", appUrl: "Public address",
+};
+const HEALTH_TONE = { ok: "good", warn: "warn", down: "bad" } as const;
+const HEALTH_LABEL = { ok: "Healthy", warn: "Needs attention", down: "Down" } as const;
+
+function uptime(sec: number) {
+  const d = Math.floor(sec / 86400), h = Math.floor((sec % 86400) / 3600), m = Math.floor((sec % 3600) / 60);
+  return d ? `${d}d ${h}h` : h ? `${h}h ${m}m` : `${m}m`;
+}
+
+export function AdminSystemHealth() {
+  const h = useApi<Health>("/admin/system/health", { refreshMs: 60_000 });
+  return (
+    <>
+      <PageHeader
+        title="System health" description="Live status of the services SAF Flow depends on. Refreshes every minute."
+        actions={<Button onClick={() => void h.reload()}><RefreshCw className="h-4 w-4" aria-hidden /> Check now</Button>}
+      />
+      <Loadable state={h}>
+        {(d) => (
+          <div className="grid gap-4 xl:grid-cols-[1fr_22rem]">
+            <div className="space-y-4">
+              <Notice tone={d.overall === "ok" ? "good" : d.overall === "warn" ? "warn" : "bad"} title={d.overall === "ok" ? "All systems healthy" : d.overall === "warn" ? "Running, with items to fix" : "A service is down"}>
+                Checked {fmtDateTime(d.checkedAt)}.
+              </Notice>
+              <Card pad={false} title="Checks">
+                <ul className="divide-y divide-slate-100">
+                  {Object.entries(d.checks).map(([k, c]) => (
+                    <li key={k} className="flex items-start gap-3 px-4 py-3">
+                      {c.status === "ok"
+                        ? <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-emerald-600" aria-hidden />
+                        : <XCircle className={`mt-0.5 h-5 w-5 shrink-0 ${c.status === "warn" ? "text-amber-500" : "text-red-600"}`} aria-hidden />}
+                      <div className="min-w-0 flex-1">
+                        <p className="flex flex-wrap items-center gap-2 text-sm font-medium text-slate-900">{CHECK_LABELS[k] ?? humanize(k)} <Badge tone={HEALTH_TONE[c.status]}>{HEALTH_LABEL[c.status]}</Badge></p>
+                        <p className="mt-0.5 break-words text-sm text-slate-600">{c.detail}</p>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              </Card>
+            </div>
+            <div className="space-y-4">
+              <Card title="Activity">
+                <KeyValue items={[
+                  ["Active businesses", String(d.counts.tenants.ACTIVE ?? 0)],
+                  ["Suspended", String(d.counts.tenants.SUSPENDED ?? 0)],
+                  ["Signed-in sessions", String(d.counts.liveSessions)],
+                  ["Pending invitations", String(d.counts.pendingInvites)],
+                  ["Expired invitations", d.counts.expiredInvites ? <Badge tone="warn">{d.counts.expiredInvites}</Badge> : "0"],
+                  ["Locked accounts", d.counts.lockedUsers ? <Badge tone="warn">{d.counts.lockedUsers}</Badge> : "0"],
+                  ["Last renewal run", d.lastRenewalAt ? fmtDateTime(d.lastRenewalAt) : "Never"],
+                ]} />
+              </Card>
+              <Card title="Server">
+                <KeyValue items={[
+                  ["Environment", d.runtime.env],
+                  ["Node.js", d.runtime.node],
+                  ["Uptime", uptime(d.runtime.uptimeSec)],
+                  ["Memory", `${d.runtime.rssMb} MB (heap ${d.runtime.heapMb} MB)`],
+                  ...(d.identityLatencyMs !== null ? [["Supabase latency", `${d.identityLatencyMs} ms`] as [string, string]] : []),
+                  ...(d.migrations ? [["Migrations", `${d.migrations.count} applied`] as [string, string], ["Latest", <span key="m" className="break-all font-mono text-xs">{d.migrations.latest ?? "-"}</span>] as [string, React.ReactNode]] : []),
+                ]} />
               </Card>
             </div>
           </div>

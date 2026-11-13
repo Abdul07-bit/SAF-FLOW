@@ -3,7 +3,7 @@ import type { Prisma } from "@prisma/client";
 import { PRODUCTS, PRODUCT_CODES, type ProductCode } from "@/config/catalog";
 import { addDays, addMonths, financialYear, isISODate, istDate, startOfDayIST, endOfDayIST, todayIST } from "@/lib/dates";
 import { route } from "../http/router";
-import { badRequest, conflict, notFound } from "../http/errors";
+import { badRequest, conflict, forbidden, notFound } from "../http/errors";
 import { hashPassword } from "../auth/password";
 import { revokeUserSessions } from "../auth/session";
 import { emailPasswordReset } from "../auth/identity";
@@ -16,7 +16,7 @@ import { addProductToTenant, businessProfileSchema, createBusiness, newBusinessS
 import { getPlatformSettings, platformSettingsSchema, savePlatformSettings } from "../core/settings";
 import { fileUrl, saveImage } from "../core/storage";
 import { notify } from "../core/notify";
-import { isRazorpayConfigured } from "../payments/razorpay";
+import { cashfreeMode, isCashfreeConfigured } from "../payments/cashfree";
 
 const isoDate = z.string().refine(isISODate, "Use YYYY-MM-DD");
 const pageQuery = z.object({
@@ -153,9 +153,22 @@ route({
     // create, otherwise it would vanish from their view immediately.
     if (!ctx.platform.allTenants)
       await ctx.db.staffAssignment.create({ data: { userId: ctx.user.id, tenantId: result.tenantId, assignedById: ctx.user.id, note: "Created this business" } });
+    const assignIds = ctx.body.assignStaffIds.filter((id) => id !== ctx.user.id);
+    if (assignIds.length) {
+      if (!ctx.platform.permissions.includes("platform.staff.assign"))
+        throw forbidden("PLATFORM_PERMISSION_DENIED", "Your role cannot assign SAF Team members.");
+      const members = await ctx.db.user.findMany({
+        where: { id: { in: assignIds }, kind: "PLATFORM", platformRoleRef: { allTenants: false } }, select: { id: true },
+      });
+      if (members.length !== new Set(assignIds).size) throw badRequest("Only SAF Team members with client-scoped roles can be assigned.");
+      await ctx.db.staffAssignment.createMany({
+        data: members.map((m) => ({ userId: m.id, tenantId: result.tenantId, assignedById: ctx.user.id, note: "Assigned at onboarding" })),
+        skipDuplicates: true,
+      });
+    }
     await ctx.audit("admin.business.create", { type: "tenant", id: result.tenantId, tenantId: result.tenantId }, {
       code: result.code, products: ctx.body.products.map((p) => `${p.productCode}:${p.tier}:${p.billingCycle}`),
-      autoAssigned: !ctx.platform.allTenants,
+      autoAssigned: !ctx.platform.allTenants, owner: ctx.body.owner.method, branches: ctx.body.branches.length, assigned: assignIds.length,
     });
     ctx.status = 201;
     return result;
@@ -849,7 +862,8 @@ route({
   handler: async ({ db }) => ({
     settings: await getPlatformSettings(db),
     integrations: {
-      razorpay: isRazorpayConfigured(),
+      cashfree: isCashfreeConfigured(),
+      cashfreeMode: cashfreeMode(),
       storage: process.env.STORAGE_DRIVER === "s3" ? "S3-compatible" : "Local disk",
       appUrl: process.env.APP_URL || "",
       cronConfigured: !!process.env.CRON_SECRET && process.env.CRON_SECRET !== "change-me",
@@ -864,6 +878,96 @@ route({
     const s = await savePlatformSettings(db, body);
     await audit("admin.settings.update", { type: "settings", id: "general" }, { fields: Object.keys(body) });
     return s;
+  },
+});
+
+type Check = { status: "ok" | "warn" | "down"; detail: string };
+
+/** Supabase Auth liveness, with a short timeout so a slow upstream cannot stall the page. */
+async function identityCheck(): Promise<Check & { latencyMs: number | null }> {
+  const url = (process.env.NEXT_PUBLIC_SUPABASE_URL || "").replace(/\/+$/, "");
+  const key = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY || "";
+  if (!url || !key) return { status: "warn", detail: "Supabase URL or publishable key not set: email sign-in is off.", latencyMs: null };
+  const t = Date.now();
+  try {
+    const r = await fetch(`${url}/auth/v1/health`, { headers: { apikey: key }, signal: AbortSignal.timeout(4000), cache: "no-store" });
+    const latencyMs = Date.now() - t;
+    if (!r.ok) return { status: "down", detail: `Supabase Auth answered ${r.status}.`, latencyMs };
+    if (!process.env.SUPABASE_SECRET_KEY) return { status: "warn", detail: "Reachable, but SUPABASE_SECRET_KEY is missing: invitations and admin resets are disabled.", latencyMs };
+    return { status: "ok", detail: "Reachable; server key configured.", latencyMs };
+  } catch (e) {
+    return { status: "down", detail: `Unreachable (${e instanceof Error ? e.name : "error"}).`, latencyMs: null };
+  }
+}
+
+route({
+  method: "GET", path: "/admin/system/health", tag: "admin", summary: "System health: database, identity, storage, jobs and integrations",
+  auth: { platform: "platform.settings.read" },
+  handler: async ({ db }) => {
+    const t = Date.now();
+    await db.$queryRaw`SELECT 1`;
+    const dbLatencyMs = Date.now() - t;
+    const [version] = await db.$queryRaw<{ v: string }[]>`SELECT current_setting('server_version') AS v`;
+    // Migration history may be outside the application role's grants. Check first:
+    // a failed query would abort the request's transaction.
+    let migrations: { count: number; latest: string | null; latestAt: Date | null } | null = null;
+    const [canRead] = await db.$queryRaw<{ ok: boolean }[]>`
+      SELECT to_regclass('_prisma_migrations') IS NOT NULL AND has_table_privilege('_prisma_migrations', 'SELECT') AS ok`;
+    if (canRead?.ok) {
+      const rows = await db.$queryRaw<{ n: bigint; latest: string | null; at: Date | null }[]>`
+        SELECT count(*) AS n, max(migration_name) AS latest, max(finished_at) AS at FROM _prisma_migrations WHERE finished_at IS NOT NULL`;
+      migrations = { count: Number(rows[0].n), latest: rows[0].latest, latestAt: rows[0].at };
+    }
+
+    const now = new Date();
+    const [lastRenewal, tenants, pendingInvites, expiredInvites, lockedUsers, liveSessions, identity] = await Promise.all([
+      db.auditLog.findFirst({ where: { action: { in: ["jobs.renewals", "POST /admin/jobs/renewals"] } }, orderBy: { createdAt: "desc" }, select: { createdAt: true, action: true } }),
+      db.tenant.groupBy({ by: ["status"], _count: { _all: true } }),
+      db.invitation.count({ where: { status: "PENDING", expiresAt: { gt: now } } }),
+      db.invitation.count({ where: { status: "PENDING", expiresAt: { lte: now } } }),
+      db.user.count({ where: { lockedUntil: { gt: now } } }),
+      db.session.count({ where: { revokedAt: null, expiresAt: { gt: now } } }),
+      identityCheck(),
+    ]);
+
+    const cronConfigured = !!process.env.CRON_SECRET && process.env.CRON_SECRET !== "change-me";
+    const renewalAgeH = lastRenewal ? (now.getTime() - lastRenewal.createdAt.getTime()) / 3_600_000 : null;
+    const s3 = process.env.STORAGE_DRIVER === "s3";
+    const checks: Record<string, Check> = {
+      database: { status: dbLatencyMs > 500 ? "warn" : "ok", detail: `PostgreSQL ${version?.v ?? "?"}, ${dbLatencyMs} ms round trip.` },
+      identity,
+      storage: s3
+        ? { status: process.env.S3_ACCESS_KEY_ID ? "ok" : "warn", detail: `S3-compatible, bucket ${process.env.S3_BUCKET || "saf-files"}.` }
+        : { status: process.env.NODE_ENV === "production" ? "warn" : "ok", detail: "Local disk. Fine for one server; use S3 storage when running several." },
+      renewals: !cronConfigured
+        ? { status: "warn", detail: "CRON_SECRET is not set: the daily renewal job cannot be scheduled." }
+        : renewalAgeH === null ? { status: "warn", detail: "The renewal job has never run." }
+        : renewalAgeH > 36 ? { status: "warn", detail: `Last run ${Math.round(renewalAgeH)} hours ago; it should run daily.` }
+        : { status: "ok", detail: `Last run ${Math.max(1, Math.round(renewalAgeH))} hours ago.` },
+      payments: !isCashfreeConfigured()
+        ? { status: "warn", detail: "Cashfree not configured: businesses can only pay offline." }
+        : cashfreeMode() === "sandbox" && process.env.NODE_ENV === "production"
+          ? { status: "warn", detail: "Cashfree keys are in sandbox mode: set CASHFREE_ENV=production to take real payments." }
+          : { status: "ok", detail: `Cashfree configured (${cashfreeMode()}).` },
+      appUrl: (process.env.APP_URL || "").startsWith("https://")
+        ? { status: "ok", detail: process.env.APP_URL! }
+        : { status: process.env.NODE_ENV === "production" ? "down" : "warn", detail: `${process.env.APP_URL || "APP_URL not set"}: use https in production (secure cookies, invite links).` },
+    };
+    const values = Object.values(checks).map((c) => c.status);
+    const mem = process.memoryUsage();
+    return {
+      overall: values.includes("down") ? "down" : values.includes("warn") ? "warn" : "ok",
+      checkedAt: now,
+      checks,
+      identityLatencyMs: identity.latencyMs,
+      lastRenewalAt: lastRenewal?.createdAt ?? null,
+      migrations,
+      runtime: { node: process.version, env: process.env.NODE_ENV ?? "development", uptimeSec: Math.round(process.uptime()), rssMb: Math.round(mem.rss / 1_048_576), heapMb: Math.round(mem.heapUsed / 1_048_576) },
+      counts: {
+        tenants: Object.fromEntries(tenants.map((g) => [g.status, g._count._all])),
+        pendingInvites, expiredInvites, lockedUsers, liveSessions,
+      },
+    };
   },
 });
 

@@ -6,7 +6,8 @@ import { badRequest, conflict, forbidden, HttpError, notFound } from "../http/er
 import { nextSeq, withPlatform, withTenant, type Tx } from "../db";
 import { hashPassword } from "../auth/password";
 import { revokeUserSessions } from "../auth/session";
-import { emailPasswordReset } from "../auth/identity";
+import { emailPasswordReset, looksLikeEmail } from "../auth/identity";
+import { inviteAccount, resendInvite } from "../core/invitations";
 import { isValidHandle, temporaryPassword } from "../core/ids";
 import { isUsable, summarize } from "../core/access";
 import { getPlatformSettings, productSettingsSchemas, saveProductSettings } from "../core/settings";
@@ -14,7 +15,7 @@ import { fileUrl, saveImage } from "../core/storage";
 import { markInvoicePaid } from "../core/subscriptions";
 import { businessProfileSchema } from "../core/tenancy";
 import { writeAudit } from "../core/audit";
-import { createRazorpayOrder, isRazorpayConfigured, verifyPaymentSignature, verifyWebhookSignature } from "../payments/razorpay";
+import { cashfreeMode, cashfreePhone, createCashfreeOrder, fetchCashfreePayment, isCashfreeConfigured, newOrderId, verifyCashfreeWebhook } from "../payments/cashfree";
 import { branches } from "@/shared/resources";
 
 // ---------------------------------------------------------------------------
@@ -99,6 +100,7 @@ route({
         include: {
           productAccess: { include: { role: true } }, employeeProfile: { select: { id: true, employeeCode: true } },
           branchAccess: { select: { branchId: true } },
+          invitations: { where: { status: "PENDING" }, take: 1, select: { sentAt: true, delivery: true } },
         },
         orderBy: [{ isTenantOwner: "desc" }, { fullName: "asc" }],
       }),
@@ -111,6 +113,8 @@ route({
         isTenantOwner: u.isTenantOwner, lastLoginAt: u.lastLoginAt, mustChangePassword: u.mustChangePassword,
         lockedUntil: u.lockedUntil, employeeCode: u.employeeProfile?.employeeCode ?? null,
         branchIds: u.branchAccess.map((b) => b.branchId),
+        signIn: u.authUserId ? "email" : "login_id",
+        invitePending: u.invitations.length > 0,
         access: u.productAccess.filter((a) => a.isActive).map((a) => ({ product: a.productCode, roleCode: a.role.code, roleName: a.role.name })),
       })),
       roles: roles.map((r) => ({ product: r.productCode, code: r.code, name: r.name, description: r.description })),
@@ -124,14 +128,32 @@ route({
   method: "POST", path: "/:product/team", tag: "team", summary: "Create an employee login ID with product roles", auth: TEAM,
   body: z.object({
     fullName: z.string().trim().min(2).max(100),
-    handle: z.string().trim().toLowerCase().refine(isValidHandle, "Login ID: 2-30 lower-case letters, digits, dot, dash or underscore, starting with a letter"),
+    /** "login_id": CODE@handle with a temporary password. "email": email invitation, they set their own password. */
+    signIn: z.enum(["login_id", "email"]).default("login_id"),
+    handle: z.string().trim().toLowerCase().refine(isValidHandle, "Login ID: 2-30 lower-case letters, digits, dot, dash or underscore, starting with a letter").optional(),
     phone: z.string().trim().max(20).optional(),
     email: z.string().trim().max(120).optional(),
+    delivery: z.enum(["email", "link"]).default("email"),
     access: accessInput.min(1),
     /** Restrict to these branches; omitted or [] = every branch. */
     branchIds: z.array(z.uuid()).max(50).optional(),
   }),
   handler: async (ctx) => {
+    if (ctx.body.signIn === "email") {
+      const email = (ctx.body.email ?? "").toLowerCase();
+      if (!looksLikeEmail(email)) throw badRequest("Enter a valid email address to send the invitation.");
+      const r = await inviteAccount(ctx.db, {
+        email, fullName: ctx.body.fullName, phone: ctx.body.phone, kind: "TENANT", tenantId: ctx.tenantId,
+        delivery: ctx.body.delivery, invitedById: ctx.user.id,
+      });
+      await applyAccess(ctx.db, ctx, r.user.id, ctx.body.access);
+      const invBranches = ctx.body.branchIds?.length ? ctx.body.branchIds : ctx.access.branchRestricted ? ctx.access.branches.map((b) => b.id) : [];
+      await applyBranches(ctx, r.user.id, invBranches);
+      await ctx.audit("team.user.invite", { type: "user", id: r.user.id }, { email, access: ctx.body.access, branchIds: invBranches, delivery: r.delivery });
+      ctx.status = 201;
+      return { id: r.user.id, username: email, invited: true, delivery: r.delivery, inviteLink: r.link };
+    }
+    if (!ctx.body.handle) throw badRequest("Choose a login ID.");
     const username = `${ctx.user.tenantCode}@${ctx.body.handle}`;
     if (ctx.body.handle === "manager") throw badRequest("This login ID is reserved.");
     if (await ctx.db.user.findUnique({ where: { username }, select: { id: true } }))
@@ -198,6 +220,17 @@ route({
     await revokeUserSessions(ctx.db, u.id);
     await ctx.audit("team.user.reset_password", { type: "user", id: u.id });
     return { username: u.username, temporaryPassword: password };
+  },
+});
+
+route({
+  method: "POST", path: "/:product/team/:userId/resend-invite", tag: "team", summary: "Send a fresh invitation to a staff member who has not accepted yet", auth: TEAM,
+  body: z.object({ delivery: z.enum(["email", "link"]).default("email") }),
+  handler: async (ctx) => {
+    const u = await loadMember(ctx);
+    const r = await resendInvite(ctx.db, u.id, ctx.body.delivery);
+    await ctx.audit("team.user.invite_resent", { type: "user", id: u.id }, { delivery: r.delivery });
+    return { ok: true, delivery: r.delivery, inviteLink: r.link };
   },
 });
 
@@ -304,7 +337,7 @@ route({
       ...cmp,
       invoices: invoices.map((i) => ({ ...i, paidAmount: i.payments.reduce((a, b) => a + b.amount, 0), payments: undefined })),
       events,
-      onlinePayments: settings.onlinePayments && isRazorpayConfigured(),
+      onlinePayments: settings.onlinePayments && isCashfreeConfigured(),
       gstRateBp: settings.gstRateBp,
       support: { phone: settings.supportPhone, email: settings.supportEmail, whatsapp: settings.supportWhatsApp },
     };
@@ -342,32 +375,51 @@ route({
 });
 
 route({
-  method: "POST", path: "/:product/billing/invoices/:id/checkout", tag: "billing", summary: "Start an online (Razorpay) payment for a SAF invoice", auth: BILLING,
+  method: "POST", path: "/:product/billing/invoices/:id/checkout", tag: "billing", summary: "Start an online (Cashfree) payment for a SAF invoice", auth: BILLING,
   handler: async (ctx) => {
     const settings = await getPlatformSettings(ctx.db);
-    if (!settings.onlinePayments || !isRazorpayConfigured())
+    if (!settings.onlinePayments || !isCashfreeConfigured())
       throw new HttpError(503, "PAYMENTS_NOT_CONFIGURED", "Online payment is not available. Please contact SAF support to pay.");
     const inv = await ctx.db.invoice.findFirst({ where: { id: ctx.params.id, tenantId: ctx.tenantId }, include: { payments: { where: { status: "SUCCEEDED" } } } });
     if (!inv) throw notFound("Invoice");
     if (inv.status !== "ISSUED") throw conflict("This invoice is not payable.");
     const due = inv.total - inv.payments.reduce((a, b) => a + b.amount, 0);
-    const order = await createRazorpayOrder(due, inv.invoiceNo, { invoiceId: inv.id, tenantId: ctx.tenantId });
-    await ctx.db.payment.create({
-      data: { tenantId: ctx.tenantId, invoiceId: inv.id, subscriptionId: inv.subscriptionId, amount: due, method: "RAZORPAY", status: "PENDING", gatewayOrderId: order.id },
+    if (due < 100) throw conflict("Nothing left to pay on this invoice.");
+    const [user, biz] = await Promise.all([
+      ctx.db.user.findUnique({ where: { id: ctx.user.id }, select: { phone: true, email: true } }),
+      ctx.db.business.findUnique({ where: { tenantId: ctx.tenantId }, select: { phone: true, email: true } }),
+    ]);
+    const phone = cashfreePhone(user?.phone) ?? cashfreePhone(biz?.phone);
+    if (!phone) throw badRequest("Add a valid 10-digit mobile number to your business profile to pay online.");
+    const appUrl = (process.env.APP_URL || "http://localhost:3000").replace(/\/+$/, "");
+    const orderId = newOrderId(inv.invoiceNo);
+    const order = await createCashfreeOrder({
+      orderId, amountPaise: due,
+      customer: { id: `T${ctx.user.tenantCode ?? ""}${ctx.tenantId}`, phone, name: ctx.user.fullName, email: user?.email ?? biz?.email },
+      // Cashfree fills {order_id}; the subscription page confirms the order on return.
+      returnUrl: `${appUrl}/${ctx.params.product}/subscription?cf_order={order_id}`,
+      notifyUrl: appUrl.startsWith("https://") ? `${appUrl}/api/webhooks/cashfree` : undefined,
+      note: `${inv.invoiceNo} - ${inv.description}`,
     });
-    return {
-      keyId: process.env.RAZORPAY_KEY_ID, orderId: order.id, amount: due, currency: "INR",
-      name: settings.platformName, description: `${inv.invoiceNo} - ${inv.description}`,
-      prefill: { name: ctx.user.fullName },
-    };
+    await ctx.db.payment.create({
+      data: { tenantId: ctx.tenantId, invoiceId: inv.id, subscriptionId: inv.subscriptionId, amount: due, method: "CASHFREE", status: "PENDING", gatewayOrderId: order.orderId },
+    });
+    return { orderId: order.orderId, paymentSessionId: order.paymentSessionId, mode: cashfreeMode(), amount: due, currency: "INR" };
   },
 });
 
-/** Shared by the checkout callback and the webhook. Idempotent per gateway order. */
-async function settleGatewayOrder(db: Tx, orderId: string, paymentId: string) {
+/**
+ * Shared by the checkout confirmation and the webhook. Idempotent per gateway
+ * order; refuses to settle when the gateway amount differs from the order.
+ */
+async function settleGatewayOrder(db: Tx, orderId: string, paymentId: string, amountPaise: number) {
   const pending = await db.payment.findUnique({ where: { gatewayOrderId: orderId }, include: { invoice: true } });
   if (!pending) throw notFound("Payment");
   if (pending.status === "SUCCEEDED") return pending;
+  if (amountPaise !== pending.amount) {
+    console.error("[cashfree] amount mismatch", { orderId, expected: pending.amount, got: amountPaise });
+    throw conflict("The paid amount does not match this order. SAF support has been notified.");
+  }
   const p = await db.payment.update({ where: { id: pending.id }, data: { status: "SUCCEEDED", gatewayPaymentId: paymentId, paidAt: new Date(), reference: paymentId } });
   if (pending.invoice && pending.invoice.status === "ISSUED") {
     const paid = await db.payment.aggregate({ where: { invoiceId: pending.invoice.id, status: "SUCCEEDED" }, _sum: { amount: true } });
@@ -377,30 +429,43 @@ async function settleGatewayOrder(db: Tx, orderId: string, paymentId: string) {
 }
 
 route({
-  method: "POST", path: "/:product/billing/razorpay/verify", tag: "billing", summary: "Confirm a Razorpay checkout (signature verified server-side)", auth: BILLING,
-  body: z.object({ orderId: z.string().max(60), paymentId: z.string().max(60), signature: z.string().max(200) }),
+  method: "POST", path: "/:product/billing/cashfree/confirm", tag: "billing",
+  summary: "Confirm a Cashfree checkout: the server reads the order from Cashfree and settles it when PAID", auth: BILLING,
+  body: z.object({ orderId: z.string().min(3).max(45).regex(/^[A-Za-z0-9_-]+$/) }),
   handler: async (ctx) => {
-    if (!verifyPaymentSignature(ctx.body.orderId, ctx.body.paymentId, ctx.body.signature))
-      throw new HttpError(400, "INVALID_SIGNATURE", "Payment could not be verified.");
-    const p = await settleGatewayOrder(ctx.db, ctx.body.orderId, ctx.body.paymentId);
-    await ctx.audit("billing.online_payment", { type: "payment", id: p.id }, { orderId: ctx.body.orderId });
-    return { ok: true };
+    // RLS confines this lookup to the caller's business.
+    const pending = await ctx.db.payment.findFirst({ where: { gatewayOrderId: ctx.body.orderId, tenantId: ctx.tenantId }, select: { id: true, status: true } });
+    if (!pending) throw notFound("Payment");
+    if (pending.status === "SUCCEEDED") return { status: "PAID" };
+    const r = await fetchCashfreePayment(ctx.body.orderId);
+    if (!("cfPaymentId" in r)) return { status: r.status };
+    const p = await settleGatewayOrder(ctx.db, ctx.body.orderId, r.cfPaymentId, r.amountPaise);
+    await ctx.audit("billing.online_payment", { type: "payment", id: p.id }, { orderId: ctx.body.orderId, gateway: "cashfree" });
+    return { status: "PAID" };
   },
 });
 
 route({
-  method: "POST", path: "/webhooks/razorpay", tag: "billing", summary: "Razorpay webhook (payment.captured / order.paid)",
+  method: "POST", path: "/webhooks/cashfree", tag: "billing", summary: "Cashfree payment webhook (PAYMENT_SUCCESS_WEBHOOK)",
   auth: { public: true }, rawBody: true, audit: false,
   handler: async (ctx) => {
     const raw = await ctx.req.text();
-    if (!verifyWebhookSignature(raw, ctx.req.headers.get("x-razorpay-signature") || ""))
+    const h = ctx.req.headers;
+    if (!verifyCashfreeWebhook(raw, h.get("x-webhook-timestamp") || "", h.get("x-webhook-signature") || ""))
       throw new HttpError(400, "INVALID_SIGNATURE", "Invalid webhook signature.");
-    const evt = JSON.parse(raw) as { event: string; payload?: { payment?: { entity?: { id: string; order_id: string } } } };
-    const pay = evt.payload?.payment?.entity;
-    if ((evt.event === "payment.captured" || evt.event === "order.paid") && pay?.order_id) {
+    const evt = JSON.parse(raw) as {
+      type?: string;
+      data?: { order?: { order_id?: string }; payment?: { cf_payment_id?: string | number; payment_status?: string; payment_amount?: number } };
+    };
+    const orderId = evt.data?.order?.order_id;
+    const pay = evt.data?.payment;
+    if (evt.type === "PAYMENT_SUCCESS_WEBHOOK" && pay?.payment_status === "SUCCESS" && orderId && pay.cf_payment_id != null) {
       await withPlatform(async (db) => {
-        const p = await settleGatewayOrder(db, pay.order_id, pay.id).catch(() => null);
-        if (p) await writeAudit(db, { tenantId: p.tenantId, action: "billing.webhook_payment", entityType: "payment", entityId: p.id });
+        const p = await settleGatewayOrder(db, orderId, String(pay.cf_payment_id), Math.round(Number(pay.payment_amount) * 100)).catch((e) => {
+          console.error("[cashfree] webhook not settled", orderId, e instanceof Error ? e.message : e);
+          return null;
+        });
+        if (p) await writeAudit(db, { tenantId: p.tenantId, action: "billing.webhook_payment", entityType: "payment", entityId: p.id, meta: { gateway: "cashfree" } });
       });
     }
     return { ok: true };

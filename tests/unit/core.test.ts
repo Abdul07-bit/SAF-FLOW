@@ -1,6 +1,6 @@
 import { createHmac } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { ALL_FEATURES, PRODUCT_LIST, PRODUCTS, rolePermissionKeys } from "@/config/catalog";
+import { ALL_FEATURES, BUSINESS_CATEGORIES, BUSINESS_TYPES, PRODUCT_CODES, PRODUCT_LIST, PRODUCTS, businessType, rolePermissionKeys } from "@/config/catalog";
 import { addDays, addMonths, daysBetween, endOfMonth, financialYear, hhmmToMinutes, istDate, startOfDayIST } from "@/lib/dates";
 import { computeTotals, formatINR, rupeesToPaise, taxOn } from "@/lib/money";
 import { subscriptionState } from "@/server/core/access";
@@ -8,7 +8,7 @@ import { isValidBusinessCode, isValidHandle, normalizeUsername, temporaryPasswor
 import { periodExpiry } from "@/server/core/subscriptions";
 import { passwordPolicyError } from "@/server/auth/password";
 import { sniffImage } from "@/server/core/storage";
-import { verifyPaymentSignature, verifyWebhookSignature } from "@/server/payments/razorpay";
+import { cashfreePhone, newOrderId, verifyCashfreeWebhook } from "@/server/payments/cashfree";
 import { listRoutes } from "@/server/api";
 import { RESOURCES } from "@/shared/resources";
 
@@ -98,15 +98,23 @@ describe("identity helpers", () => {
   });
 });
 
-describe("razorpay signatures", () => {
-  it("accepts only the correct HMAC", () => {
-    const sig = createHmac("sha256", "secret").update("order_1|pay_1").digest("hex");
-    expect(verifyPaymentSignature("order_1", "pay_1", sig, "secret")).toBe(true);
-    expect(verifyPaymentSignature("order_1", "pay_2", sig, "secret")).toBe(false);
-    expect(verifyPaymentSignature("order_1", "pay_1", sig, "")).toBe(false);
-    const body = '{"event":"payment.captured"}';
-    expect(verifyWebhookSignature(body, createHmac("sha256", "wh").update(body).digest("hex"), "wh")).toBe(true);
-    expect(verifyWebhookSignature(body + " ", createHmac("sha256", "wh").update(body).digest("hex"), "wh")).toBe(false);
+describe("cashfree", () => {
+  it("webhook signature is base64 HMAC of timestamp + raw body", () => {
+    const body = '{"type":"PAYMENT_SUCCESS_WEBHOOK","data":{"payment":{"payment_amount":170.00}}}';
+    const sig = createHmac("sha256", "secret").update("1731470000000" + body).digest("base64");
+    expect(verifyCashfreeWebhook(body, "1731470000000", sig, "secret")).toBe(true);
+    expect(verifyCashfreeWebhook(body, "1731470000001", sig, "secret")).toBe(false);
+    expect(verifyCashfreeWebhook(body.replace("170.00", "170"), "1731470000000", sig, "secret")).toBe(false);
+    expect(verifyCashfreeWebhook(body, "1731470000000", sig, "")).toBe(false);
+    expect(verifyCashfreeWebhook(body, "", sig, "secret")).toBe(false);
+  });
+  it("normalises phones and order ids to what Cashfree accepts", () => {
+    expect(cashfreePhone("+91 98765 43210")).toBe("9876543210");
+    expect(cashfreePhone("09876543210")).toBe("9876543210");
+    expect(cashfreePhone("12345")).toBeNull();
+    expect(cashfreePhone(null)).toBeNull();
+    expect(newOrderId("SAF/2026-27/000123 with spaces and a very long tail")).toMatch(/^[A-Za-z0-9_-]{3,45}$/);
+    expect(newOrderId("X")).not.toBe(newOrderId("X"));
   });
 });
 
@@ -159,7 +167,7 @@ describe("API authorisation policy (lint)", () => {
       "POST /auth/password-reset",
       "POST /jobs/renewals",
       "POST /public/dine/menu/:qrToken/order",
-      "POST /webhooks/razorpay",
+      "POST /webhooks/cashfree",
     ]);
   });
   it("every /admin endpoint is Super Admin only, and nothing else is", () => {
@@ -194,5 +202,15 @@ describe("API authorisation policy (lint)", () => {
         for (const p of products) for (const k of arr(side.permission)) expect(permKeys.has(`${p}.${k}`), `${def.key}: ${p}.${k}`).toBe(true);
       }
     }
+  });
+});
+
+describe("business-type registry", () => {
+  it("describes every category and only recommends real products", () => {
+    expect(Object.keys(BUSINESS_TYPES).sort()).toEqual([...BUSINESS_CATEGORIES].sort());
+    for (const t of Object.values(BUSINESS_TYPES)) for (const p of t.recommended) expect(PRODUCT_CODES).toContain(p);
+    expect(businessType("HOTEL").recommended).toContain("stay");
+    expect(businessType("NOT_A_TYPE")).toBe(BUSINESS_TYPES.OTHER);
+    expect(businessType(null)).toBe(BUSINESS_TYPES.OTHER);
   });
 });

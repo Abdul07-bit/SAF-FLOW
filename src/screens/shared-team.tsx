@@ -17,7 +17,7 @@ const hours = (min: number) => (min ? `${Math.floor(min / 60)}h ${String(min % 6
 
 function CredentialsModal({ creds, onClose }: { creds: { username: string; temporaryPassword: string } | null; onClose: () => void }) {
   if (!creds) return null;
-  const text = `SMARTAUTO FLEX login\nLogin ID: ${creds.username}\nTemporary password: ${creds.temporaryPassword}\nYou will be asked to set your own password at first sign-in.`;
+  const text = `SAF Flow login\nLogin ID: ${creds.username}\nTemporary password: ${creds.temporaryPassword}\nYou will be asked to set your own password at first sign-in.`;
   return (
     <Modal open onClose={onClose} title="Login details" size="sm" footer={<Button variant="primary" onClick={onClose}>Done</Button>}>
       <Notice tone="warn">This temporary password is shown only once. Share it privately with the staff member.</Notice>
@@ -29,6 +29,19 @@ function CredentialsModal({ creds, onClose }: { creds: { username: string; tempo
     </Modal>
   );
 }
+
+function InviteLinkModal({ link, onClose }: { link: string | null; onClose: () => void }) {
+  if (!link) return null;
+  return (
+    <Modal open onClose={onClose} title="Invitation link" size="sm" footer={<Button variant="primary" onClick={onClose}>Done</Button>}>
+      <p className="text-sm text-slate-700">Send this link to the staff member. It opens a page where they choose their own password.</p>
+      <p className="mt-3 break-all rounded-lg bg-slate-50 p-2 font-mono text-xs">{link}</p>
+      <Button className="mt-4 w-full" onClick={() => navigator.clipboard.writeText(link).then(() => toast("Copied"))}><Copy className="h-4 w-4" /> Copy link</Button>
+    </Modal>
+  );
+}
+
+type SaveResult = { username: string; temporaryPassword?: string; invited?: boolean; delivery?: string; inviteLink?: string | null };
 
 // ---------------------------------------------------------------------------
 // Staff logins
@@ -46,12 +59,19 @@ export function TeamScreen() {
   const team = useApi<TeamData>(`${p.base}/team`);
   const [editing, setEditing] = useState<any | null | undefined>(undefined);
   const [creds, setCreds] = useState<{ username: string; temporaryPassword: string } | null>(null);
+  const [inviteLink, setInviteLink] = useState<string | null>(null);
   const [, run] = useAction();
+  const handleResult = (r?: SaveResult) => {
+    if (!r) return;
+    if (r.temporaryPassword) setCreds({ username: r.username, temporaryPassword: r.temporaryPassword });
+    else if (r.inviteLink) setInviteLink(r.inviteLink);
+    else if (r.invited) toast(`Invitation emailed to ${r.username}`);
+  };
 
   return (
     <>
       <PageHeader
-        title="Staff logins" description="Create login IDs for your team and choose what each person can do."
+        title="Staff logins" description="Invite your team by email, or give staff without email a login ID. Choose what each person can do and which branches they work in."
         actions={<Button variant="primary" onClick={() => setEditing(null)}><UserPlus className="h-4 w-4" /> Add staff login</Button>}
       />
       <Card pad={false}>
@@ -61,16 +81,23 @@ export function TeamScreen() {
               rows={d.items} rowKey={(r) => r.id}
               columns={[
                 { key: "name", label: "Name", render: (r) => <><span className="font-medium">{r.fullName}</span>{r.isTenantOwner && <Badge tone="brand" className="ml-2">Owner</Badge>}</> },
-                { key: "login", label: "Login ID", render: (r) => <span className="font-mono text-[13px]">{r.username}</span> },
+                { key: "login", label: "Signs in with", render: (r) => <span className="block"><span className="font-mono text-[13px]">{r.username}</span><span className="block text-xs text-slate-500">{r.signIn === "email" ? "Email" : "Login ID"}{r.branchIds?.length ? ` · ${r.branchIds.length} branch(es)` : ""}</span></span> },
                 { key: "roles", label: "Access", render: (r) => <span className="flex flex-wrap gap-1">{r.access.map((a: any) => <Badge key={a.product} tone={a.product === p.code ? "brand" : "neutral"}>{PRODUCTS[a.product as ProductCode].shortName}: {a.roleName}</Badge>)}</span> },
-                { key: "status", label: "Status", render: (r) => <StatusBadge value={r.isActive ? (r.lockedUntil && new Date(r.lockedUntil) > new Date() ? "SUSPENDED" : "ACTIVE") : "INACTIVE"} label={r.isActive ? (r.lockedUntil && new Date(r.lockedUntil) > new Date() ? "Locked" : r.mustChangePassword ? "Active - temp password" : "Active") : "Disabled"} /> },
+                { key: "status", label: "Status", render: (r) => r.invitePending ? <Badge tone="warn">Invitation pending</Badge> : <StatusBadge value={r.isActive ? (r.lockedUntil && new Date(r.lockedUntil) > new Date() ? "SUSPENDED" : "ACTIVE") : "INACTIVE"} label={r.isActive ? (r.lockedUntil && new Date(r.lockedUntil) > new Date() ? "Locked" : r.mustChangePassword ? "Active - temp password" : "Active") : "Disabled"} /> },
                 { key: "last", label: "Last sign-in", render: (r) => (r.lastLoginAt ? fmtDateTime(r.lastLoginAt) : "Never") },
                 {
                   key: "act", label: "", align: "right",
                   render: (r) => (!r.isTenantOwner || p.user.isTenantOwner) && (
                     <span className="flex justify-end gap-1">
                       {r.id !== p.user.id && <Button size="sm" variant="ghost" onClick={() => setEditing(r)}><Pencil className="h-3.5 w-3.5" /> Roles</Button>}
-                      <Button size="sm" variant="ghost" onClick={() => window.confirm(`Reset the password for ${r.username}? They will be signed out.`) && run(async () => setCreds(await api(`${p.base}/team/${r.id}/reset-password`, { method: "POST" })))}><KeyRound className="h-3.5 w-3.5" /> Reset</Button>
+                      {r.invitePending ? (
+                        <Button size="sm" variant="ghost" onClick={() => run(async () => { const x = await api<{ inviteLink: string | null }>(`${p.base}/team/${r.id}/resend-invite`, { body: { delivery: "link" } }); setInviteLink(x.inviteLink); })}>Invite link</Button>
+                      ) : (
+                        <Button size="sm" variant="ghost" onClick={() => window.confirm(r.signIn === "email" ? `Email a password-reset link to ${r.username}?` : `Reset the password for ${r.username}? They will be signed out.`) && run(async () => {
+                          const x = await api<any>(`${p.base}/team/${r.id}/reset-password`, { method: "POST" });
+                          if (x.emailed) toast(`Reset link emailed to ${x.email}`); else setCreds(x);
+                        })}><KeyRound className="h-3.5 w-3.5" /> Reset</Button>
+                      )}
                       {r.id !== p.user.id && (
                         <Button size="sm" variant="ghost" onClick={() => run(async () => { await api(`${p.base}/team/${r.id}/status`, { body: { isActive: !r.isActive } }); await team.reload(); }, r.isActive ? "Account disabled" : "Account enabled")}>
                           {r.isActive ? "Disable" : "Enable"}
@@ -85,17 +112,23 @@ export function TeamScreen() {
         </Loadable>
       </Card>
       {team.data && editing !== undefined && (
-        <StaffModal data={team.data} member={editing} onClose={() => setEditing(undefined)} onSaved={(c) => { if (c) setCreds(c); void team.reload(); }} />
+        <StaffModal data={team.data} member={editing} onClose={() => setEditing(undefined)} onSaved={(r) => { handleResult(r); void team.reload(); }} />
       )}
       <CredentialsModal creds={creds} onClose={() => setCreds(null)} />
+      <InviteLinkModal link={inviteLink} onClose={() => setInviteLink(null)} />
     </>
   );
 }
 
-function StaffModal({ data, member, onClose, onSaved }: { data: TeamData; member: any | null; onClose: () => void; onSaved: (creds?: { username: string; temporaryPassword: string }) => void }) {
+function StaffModal({ data, member, onClose, onSaved }: { data: TeamData; member: any | null; onClose: () => void; onSaved: (r?: SaveResult) => void }) {
   const p = useProduct();
   const [fullName, setFullName] = useState(member?.fullName ?? "");
   const [handle, setHandle] = useState("");
+  const [signIn, setSignIn] = useState<"email" | "login_id">("login_id");
+  const [email, setEmail] = useState("");
+  const [delivery, setDelivery] = useState<"email" | "link">("email");
+  const [branchIds, setBranchIds] = useState<string[]>(member?.branchIds ?? []);
+  const showBranches = p.branches.length > 1 && !member?.isTenantOwner;
   const [phone, setPhone] = useState(member?.phone ?? "");
   const initial = Object.fromEntries(data.grantableProducts.map((c) => [c, member?.access.find((a: any) => a.product === c)?.roleCode ?? ""]));
   const [roles, setRoles] = useState<Record<string, string>>(initial);
@@ -109,13 +142,17 @@ function StaffModal({ data, member, onClose, onSaved }: { data: TeamData; member
     try {
       if (member) {
         const access = data.grantableProducts.filter((c) => roles[c] !== initial[c]).map((c) => ({ product: c, roleCode: roles[c] || null }));
-        await api(`${p.base}/team/${member.id}`, { method: "PATCH", body: { fullName, phone: phone || null, ...(access.length ? { access } : {}) } });
+        const branchChanged = showBranches && JSON.stringify([...branchIds].sort()) !== JSON.stringify([...(member.branchIds ?? [])].sort());
+        await api(`${p.base}/team/${member.id}`, { method: "PATCH", body: { fullName, phone: phone || null, ...(access.length ? { access } : {}), ...(branchChanged ? { branchIds } : {}) } });
         toast("Staff member updated");
         onSaved();
       } else {
         const access = data.grantableProducts.filter((c) => roles[c]).map((c) => ({ product: c, roleCode: roles[c] }));
         if (!access.length) throw new Error("Choose a role for at least one application.");
-        onSaved(await api(`${p.base}/team`, { body: { fullName, handle: handle.toLowerCase(), phone: phone || undefined, access } }));
+        const common = { fullName, phone: phone || undefined, access, ...(showBranches && branchIds.length ? { branchIds } : {}) };
+        onSaved(await api(`${p.base}/team`, {
+          body: signIn === "email" ? { ...common, signIn, email, delivery } : { ...common, signIn, handle: handle.toLowerCase() },
+        }));
       }
       onClose();
     } catch (err) {
@@ -132,6 +169,23 @@ function StaffModal({ data, member, onClose, onSaved }: { data: TeamData; member
           <Field label="Full name" required><Input required minLength={2} value={fullName} onChange={(e) => setFullName(e.target.value)} /></Field>
           <Field label="Phone"><Input type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} /></Field>
           {!member && (
+            <fieldset className="sm:col-span-2">
+              <legend className="text-[13px] font-medium text-slate-700">How they sign in</legend>
+              <div className="mt-1 flex flex-wrap gap-4 text-sm">
+                <label className="flex items-center gap-2"><input type="radio" name="signin" className="accent-[var(--brand)]" checked={signIn === "email"} onChange={() => setSignIn("email")} /> Email invitation</label>
+                <label className="flex items-center gap-2"><input type="radio" name="signin" className="accent-[var(--brand)]" checked={signIn === "login_id"} onChange={() => setSignIn("login_id")} /> Login ID (no email needed)</label>
+              </div>
+            </fieldset>
+          )}
+          {!member && signIn === "email" && (
+            <>
+              <Field label="Email" required><Input required type="email" value={email} onChange={(e) => setEmail(e.target.value)} /></Field>
+              <Field label="Send invitation">
+                <Select value={delivery} onChange={(e) => setDelivery(e.target.value as "email" | "link")}><option value="email">By email</option><option value="link">Give me a link to share</option></Select>
+              </Field>
+            </>
+          )}
+          {!member && signIn === "login_id" && (
             <Field label="Login ID" required help="Lower-case letters, digits, dot, dash." className="sm:col-span-2">
               <div className="flex">
                 <span className="flex h-10 items-center rounded-l-lg border border-r-0 border-slate-300 bg-slate-50 px-3 font-mono text-sm text-slate-600">{data.tenantCode}@</span>
@@ -154,8 +208,20 @@ function StaffModal({ data, member, onClose, onSaved }: { data: TeamData; member
             ))}
           </div>
         </fieldset>
+        {showBranches && (
+          <fieldset>
+            <legend className="text-[13px] font-medium text-slate-700">Branches <span className="font-normal text-slate-500">(none ticked = every branch)</span></legend>
+            <div className="mt-2 flex flex-wrap gap-3">
+              {p.branches.map((b) => (
+                <label key={b.id} className="flex items-center gap-2 text-sm">
+                  <input type="checkbox" className="h-4 w-4 accent-[var(--brand)]" checked={branchIds.includes(b.id)} onChange={() => setBranchIds((x) => (x.includes(b.id) ? x.filter((y) => y !== b.id) : [...x, b.id]))} /> {b.name}
+                </label>
+              ))}
+            </div>
+          </fieldset>
+        )}
         {error && <Notice tone="bad">{error}</Notice>}
-        <div className="flex justify-end gap-2"><Button onClick={onClose}>Cancel</Button><Button type="submit" variant="primary" loading={busy}>{member ? "Save" : "Create login"}</Button></div>
+        <div className="flex justify-end gap-2"><Button onClick={onClose}>Cancel</Button><Button type="submit" variant="primary" loading={busy}>{member ? "Save" : signIn === "email" ? "Send invitation" : "Create login"}</Button></div>
       </form>
     </Modal>
   );

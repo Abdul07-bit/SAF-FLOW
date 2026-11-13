@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ImageUp, Mail, MessageCircle, Phone, Plus, Send } from "lucide-react";
 import type { ProductCode } from "@/config/catalog";
 import { fmtDate, fmtDateTime } from "@/lib/dates";
@@ -134,16 +134,18 @@ interface SubData {
   support: { phone: string; email: string; whatsapp: string };
 }
 
-function loadRazorpay(): Promise<void> {
+function loadCashfree(): Promise<void> {
   return new Promise((resolve, reject) => {
-    if ((window as any).Razorpay) return resolve();
+    if ((window as any).Cashfree) return resolve();
     const s = document.createElement("script");
-    s.src = "https://checkout.razorpay.com/v1/checkout.js";
+    s.src = "https://sdk.cashfree.com/js/v3/cashfree.js";
     s.onload = () => resolve();
     s.onerror = () => reject(new Error("Could not load the payment window. Check your connection."));
     document.body.appendChild(s);
   });
 }
+
+const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 export function SubscriptionScreen() {
   const p = useProduct();
@@ -151,31 +153,50 @@ export function SubscriptionScreen() {
   const [request, setRequest] = useState<string | null>(null);
   const [busy, run] = useAction();
 
-  const payOnline = (invoice: any) => run(async () => {
-    const order = await api<any>(`${p.base}/billing/invoices/${invoice.id}/checkout`, { method: "POST" });
-    await loadRazorpay();
-    await new Promise<void>((resolve, reject) => {
-      const rz = new (window as any).Razorpay({
-        key: order.keyId, order_id: order.orderId, amount: order.amount, currency: order.currency, name: order.name, description: order.description, prefill: order.prefill,
-        handler: async (r: any) => {
-          try {
-            await api(`${p.base}/billing/razorpay/verify`, { body: { orderId: r.razorpay_order_id, paymentId: r.razorpay_payment_id, signature: r.razorpay_signature } });
-            toast("Payment received. Thank you!");
-            await Promise.all([data.reload(), p.reload()]);
-            resolve();
-          } catch (e) {
-            reject(e);
-          }
-        },
-        modal: { ondismiss: () => resolve() },
-      });
-      rz.open();
+  /**
+   * Asks the server to read the order from Cashfree. A just-finished payment can
+   * take a few seconds to show as PAID, so retry briefly before giving up.
+   */
+  const confirm = async (orderId: string, tries: number) => {
+    for (let i = 0; i < tries; i++) {
+      const r = await api<{ status: string }>(`${p.base}/billing/cashfree/confirm`, { body: { orderId } });
+      if (r.status === "PAID") {
+        toast("Payment received. Thank you!");
+        await Promise.all([data.reload(), p.reload()]);
+        return true;
+      }
+      if (i < tries - 1) await wait(2500);
+    }
+    return false;
+  };
+
+  // Back from a Cashfree redirect (in-app browsers cannot use the popup).
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    const orderId = url.searchParams.get("cf_order");
+    if (!orderId) return;
+    url.searchParams.delete("cf_order");
+    window.history.replaceState(null, "", url.toString());
+    void run(async () => {
+      if (!(await confirm(orderId, 4))) toast("We have not received this payment yet. If money left your account, it will show here once the bank confirms.", "info");
     });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const payOnline = (invoice: any) => run(async () => {
+    const order = await api<{ orderId: string; paymentSessionId: string; mode: "sandbox" | "production" }>(`${p.base}/billing/invoices/${invoice.id}/checkout`, { method: "POST" });
+    await loadCashfree();
+    const cashfree = (window as any).Cashfree({ mode: order.mode });
+    const result = await cashfree.checkout({ paymentSessionId: order.paymentSessionId, redirectTarget: "_modal" });
+    if (result?.redirect) return; // the page is navigating to Cashfree; the return URL confirms it
+    // Never trust the browser result: the server checks the order with Cashfree.
+    const paid = await confirm(order.orderId, result?.paymentDetails ? 4 : 1);
+    if (!paid && result?.paymentDetails) toast("Payment is being confirmed by the bank. This page will update once it is received.", "info");
   });
 
   return (
     <>
-      <PageHeader title="Subscription" description={`Your ${p.product.name} plan, renewal dates and SMARTAUTO FLEX invoices.`} />
+      <PageHeader title="Subscription" description={`Your ${p.product.name} plan, renewal dates and SmartAutoFlex invoices.`} />
       <Loadable state={data}>
         {(d) => {
           const s = d.subscription;
@@ -185,7 +206,7 @@ export function SubscriptionScreen() {
             <div className="space-y-4">
               {s && s.state !== "ACTIVE" && (
                 <Notice tone={s.state === "GRACE" ? "warn" : "bad"} title={s.state === "GRACE" ? "Subscription expired - grace period" : `Subscription ${s.state.toLowerCase()}`}>
-                  {s.state === "GRACE" ? `Access continues until ${fmtDate(s.graceEndsAt)}. Pay the renewal invoice below to avoid interruption.` : "Pay the outstanding invoice or contact SMARTAUTO FLEX support to restore access."}
+                  {s.state === "GRACE" ? `Access continues until ${fmtDate(s.graceEndsAt)}. Pay the renewal invoice below to avoid interruption.` : "Pay the outstanding invoice or contact SmartAutoFlex support to restore access."}
                 </Notice>
               )}
               <div className="grid gap-4 lg:grid-cols-[1fr_20rem]">
@@ -208,7 +229,7 @@ export function SubscriptionScreen() {
                     </>
                   ) : <Empty title="No subscription" />}
                 </Card>
-                <Card title="SMARTAUTO FLEX support">
+                <Card title="SmartAutoFlex support">
                   <ul className="space-y-2 text-sm text-slate-700">
                     {d.support.phone && <li className="flex items-center gap-2"><Phone className="h-4 w-4 text-slate-500" /> <a className="underline" href={`tel:${d.support.phone}`}>{d.support.phone}</a></li>}
                     {d.support.whatsapp && <li className="flex items-center gap-2"><MessageCircle className="h-4 w-4 text-slate-500" /> <a className="underline" href={`https://wa.me/${d.support.whatsapp.replace(/\D/g, "")}`} target="_blank" rel="noreferrer">WhatsApp</a></li>}
@@ -218,7 +239,7 @@ export function SubscriptionScreen() {
                 </Card>
               </div>
 
-              <Card pad={false} title="Invoices from SMARTAUTO FLEX" subtitle={due.length ? `${due.length} unpaid - ${formatINR(due.reduce((a, i) => a + i.total - i.paidAmount, 0))} due` : "All paid"}>
+              <Card pad={false} title="Invoices from SmartAutoFlex" subtitle={due.length ? `${due.length} unpaid - ${formatINR(due.reduce((a, i) => a + i.total - i.paidAmount, 0))} due` : "All paid"}>
                 <DataTable
                   rows={d.invoices} rowKey={(r) => r.id} empty={<Empty title="No invoices yet" />}
                   columns={[
@@ -230,7 +251,7 @@ export function SubscriptionScreen() {
                     { key: "act", label: "", align: "right", render: (r) => r.status === "ISSUED" && d.onlinePayments && <Button size="sm" variant="primary" loading={busy} onClick={() => payOnline(r)}>Pay {formatINR(r.total - r.paidAmount)}</Button> },
                   ]}
                 />
-                {!d.onlinePayments && due.length > 0 && <p className="border-t border-slate-100 px-4 py-2.5 text-xs text-slate-600">To pay, contact SMARTAUTO FLEX support. Your payment will be recorded against the invoice.</p>}
+                {!d.onlinePayments && due.length > 0 && <p className="border-t border-slate-100 px-4 py-2.5 text-xs text-slate-600">To pay, contact SmartAutoFlex support. Your payment will be recorded against the invoice.</p>}
               </Card>
 
               <div>
@@ -245,7 +266,7 @@ export function SubscriptionScreen() {
         open={!!request} title={request === "UPGRADE" ? "Request an upgrade" : request === "RENEWAL" ? "Request renewal" : request === "DOWNGRADE" ? "Request a downgrade" : "Change billing cycle"}
         fields={{
           ...(request === "BILLING_CYCLE" || request === "RENEWAL" ? { billingCycle: f.select("Billing cycle", ["MONTHLY", "ANNUAL"], { required: true, default: "ANNUAL" }) } : {}),
-          message: f.textarea("Message to SMARTAUTO FLEX (optional)", { max: 1000 }),
+          message: f.textarea("Message to SmartAutoFlex (optional)", { max: 1000 }),
         }}
         submitLabel="Send request" onClose={() => setRequest(null)}
         onSubmit={async (v) => {
@@ -307,7 +328,7 @@ export function SupportScreen() {
   const [creating, setCreating] = useState(false);
   return (
     <>
-      <PageHeader title="Support" description="Get help from the SMARTAUTO FLEX team." actions={<Button variant="primary" onClick={() => setCreating(true)}><Plus className="h-4 w-4" /> New ticket</Button>} />
+      <PageHeader title="Support" description="Get help from the SmartAutoFlex team." actions={<Button variant="primary" onClick={() => setCreating(true)}><Plus className="h-4 w-4" /> New ticket</Button>} />
       <div className="grid gap-4 lg:grid-cols-[minmax(0,24rem)_1fr]">
         <Card pad={false} title="Your tickets">
           <Loadable state={tickets}>

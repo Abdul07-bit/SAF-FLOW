@@ -261,3 +261,90 @@ describe("customer branch restrictions", () => {
     }), 400);
   });
 });
+
+describe("onboarding with owner invitation and staff email invites", () => {
+  it("creates branches, invites the owner by email and assigns SAF Team members in one step", async () => {
+    const admin = await adminLogin();
+    const ops = await teamMember("OPERATIONS_MANAGER");
+    const ownerEmail = email("owner");
+    const code = `OW${randomBytes(3).toString("hex")}`.toUpperCase();
+    const r = await api("POST", "/admin/businesses", {
+      cookie: admin,
+      body: {
+        name: "Invite Hotel", category: "HOTEL", ownerName: "Meera Owner", phone: "9876543210", email: ownerEmail, code,
+        products: [{ productCode: "stay", tier: "GROWTH", billingCycle: "MONTHLY" }],
+        branches: [{ name: "Hill View", code: "HILL" }, { name: "Lake Side", code: "LAKE", phone: "9000000000" }],
+        owner: { method: "invite", delivery: "email" },
+        assignStaffIds: [ops.id],
+      },
+    });
+    expect(r.status, JSON.stringify(r.body)).toBe(201);
+    expect(r.body.temporaryPassword).toBeNull();
+    expect(r.body.managerUsername).toBe(ownerEmail);
+    expect(r.body.invitation.delivery).toBe("email");
+
+    // The assigned member sees the new business straight away.
+    expect((await api("GET", `/admin/businesses/${r.body.tenantId}`, { cookie: ops.cookie })).status).toBe(200);
+    const team = await api("GET", `/admin/businesses/${r.body.tenantId}/team`, { cookie: admin });
+    expect(team.body.map((m: any) => m.memberId)).toContain(ops.id);
+
+    // Owner accepts and lands in their workspace with every branch.
+    const done = await api("POST", "/auth/link/complete", { body: { accessToken: idp.lastToken(ownerEmail), password: PASSWORD } });
+    expect(done.status, JSON.stringify(done.body)).toBe(200);
+    expect(done.body.redirect).toBe("/");
+    const owner = sessionCookieFrom(done);
+    const ctx = await api("GET", "/me/products/stay", { cookie: owner });
+    expect(ctx.status, JSON.stringify(ctx.body)).toBe(200);
+    expect(ctx.body.branches.map((b: any) => b.code).sort()).toEqual(["HILL", "LAKE", "MAIN"]);
+
+    // The owner invites a receptionist by email, limited to one branch.
+    const lake = ctx.body.branches.find((b: any) => b.code === "LAKE").id;
+    const staffEmail = email("desk");
+    const inv = await api("POST", "/stay/team", {
+      cookie: owner,
+      body: { fullName: "Desk Person", signIn: "email", email: staffEmail, access: [{ product: "stay", roleCode: "receptionist" }], branchIds: [lake] },
+    });
+    expect(inv.status, JSON.stringify(inv.body)).toBe(201);
+    expect(inv.body.invited).toBe(true);
+    const list = await api("GET", "/stay/team", { cookie: owner });
+    expect(list.body.items.find((u: any) => u.id === inv.body.id)).toMatchObject({ invitePending: true, signIn: "email", branchIds: [lake] });
+
+    const link = await api("POST", `/stay/team/${inv.body.id}/resend-invite`, { cookie: owner, body: { delivery: "link" } });
+    expect(link.body.inviteLink).toContain("access_token=");
+    const staffDone = await api("POST", "/auth/link/complete", { body: { accessToken: idp.lastToken(staffEmail), password: PASSWORD } });
+    expect(staffDone.status).toBe(200);
+    const staffCtx = await api("GET", "/me/products/stay", { cookie: sessionCookieFrom(staffDone) });
+    expect(staffCtx.body.branches.map((b: any) => b.id)).toEqual([lake]);
+  });
+
+  it("owner invitation needs an email; login-ID onboarding still works", async () => {
+    const admin = await adminLogin();
+    const code = `NE${randomBytes(3).toString("hex")}`.toUpperCase();
+    const bad = await api("POST", "/admin/businesses", {
+      cookie: admin,
+      body: { name: "No Email Cafe", category: "CAFE", ownerName: "Owner", phone: "9876543210", code, products: [{ productCode: "dine", tier: "BASIC", billingCycle: "MONTHLY" }], owner: { method: "invite" } },
+    });
+    expectError(bad, 409);
+    const ok = await api("POST", "/admin/businesses", {
+      cookie: admin,
+      body: { name: "No Email Cafe", category: "CAFE", ownerName: "Owner", phone: "9876543210", code, products: [{ productCode: "dine", tier: "BASIC", billingCycle: "MONTHLY" }], owner: { method: "login_id" } },
+    });
+    expect(ok.status, JSON.stringify(ok.body)).toBe(201);
+    expect(ok.body.managerUsername).toBe(`${code}@manager`);
+    expect(ok.body.temporaryPassword).toBeTruthy();
+  });
+});
+
+describe("system health", () => {
+  it("reports every check to settings readers and is closed to scoped roles", async () => {
+    const admin = await adminLogin();
+    const r = await api("GET", "/admin/system/health", { cookie: admin });
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(["ok", "warn", "down"]).toContain(r.body.overall);
+    expect(Object.keys(r.body.checks).sort()).toEqual(["appUrl", "database", "identity", "payments", "renewals", "storage"]);
+    expect(r.body.checks.database.status).not.toBe("down");
+    expect(typeof r.body.counts.liveSessions).toBe("number");
+    const support = await teamMember("TECH_SUPPORT");
+    expectError(await api("GET", "/admin/system/health", { cookie: support.cookie }), 403, "PLATFORM_PERMISSION_DENIED");
+  });
+});

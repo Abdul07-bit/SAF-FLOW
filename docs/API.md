@@ -23,7 +23,7 @@ Each endpoint declares exactly one policy, enforced by the router before the han
 - **Tenant user of a product** - checks, in order: business active, product subscribed, subscription usable,
   the user has a role in that product, the plan (or a per-business override) includes the feature, the role grants the permission.
 
-296 endpoints.
+299 endpoints.
 
 ## Authentication & session
 
@@ -86,6 +86,7 @@ Each endpoint declares exactly one policy, enforced by the router before the han
 | GET | `/api/admin/support/tickets/:id` | Support ticket thread | SAF Super Admin only. |
 | PATCH | `/api/admin/support/tickets/:id` | Change ticket status / priority | SAF Super Admin only. |
 | POST | `/api/admin/support/tickets/:id/messages` | Reply to a support ticket | SAF Super Admin only. |
+| GET | `/api/admin/system/health` | System health: database, identity, storage, jobs and integrations | SAF Super Admin only. |
 | POST | `/api/admin/users/:id/reset-password` | Issue a new temporary password | SAF Super Admin only. |
 | POST | `/api/admin/users/:id/status` | Enable or disable any account | SAF Super Admin only. |
 | POST | `/api/admin/users/:id/unlock` | Unlock an account locked by failed sign-ins | SAF Super Admin only. |
@@ -97,6 +98,7 @@ Each endpoint declares exactly one policy, enforced by the router before the han
 | GET | `/api/:product/team` | Staff login accounts with access to this product | Tenant user of the product in the URL with a usable subscription; plan feature: staff_logins; role permission: staff.manage. |
 | POST | `/api/:product/team` | Create an employee login ID with product roles | Tenant user of the product in the URL with a usable subscription; plan feature: staff_logins; role permission: staff.manage. |
 | PATCH | `/api/:product/team/:userId` | Edit a staff member and change product roles | Tenant user of the product in the URL with a usable subscription; plan feature: staff_logins; role permission: staff.manage. |
+| POST | `/api/:product/team/:userId/resend-invite` | Send a fresh invitation to a staff member who has not accepted yet | Tenant user of the product in the URL with a usable subscription; plan feature: staff_logins; role permission: staff.manage. |
 | POST | `/api/:product/team/:userId/reset-password` | Reset a staff password (issues a temporary password) | Tenant user of the product in the URL with a usable subscription; plan feature: staff_logins; role permission: staff.manage. |
 | POST | `/api/:product/team/:userId/status` | Enable or disable a staff account | Tenant user of the product in the URL with a usable subscription; plan feature: staff_logins; role permission: staff.manage. |
 
@@ -148,13 +150,13 @@ Each endpoint declares exactly one policy, enforced by the router before the han
 
 | Method | Path | Summary | Authorization |
 |---|---|---|---|
-| POST | `/api/:product/billing/invoices/:id/checkout` | Start an online (Razorpay) payment for a SAF invoice | Tenant user of the product in the URL with a usable subscription (expired/suspended allowed); role permission: subscription.view. |
-| POST | `/api/:product/billing/razorpay/verify` | Confirm a Razorpay checkout (signature verified server-side) | Tenant user of the product in the URL with a usable subscription (expired/suspended allowed); role permission: subscription.view. |
+| POST | `/api/:product/billing/cashfree/confirm` | Confirm a Cashfree checkout: the server reads the order from Cashfree and settles it when PAID | Tenant user of the product in the URL with a usable subscription (expired/suspended allowed); role permission: subscription.view. |
+| POST | `/api/:product/billing/invoices/:id/checkout` | Start an online (Cashfree) payment for a SAF invoice | Tenant user of the product in the URL with a usable subscription (expired/suspended allowed); role permission: subscription.view. |
 | GET | `/api/:product/subscription` | Subscription, plan comparison and SAF invoices for this product | Tenant user of the product in the URL with a usable subscription (expired/suspended allowed); role permission: subscription.view. |
 | POST | `/api/:product/subscription/request` | Request an upgrade, renewal or plan change from SAF | Tenant user of the product in the URL with a usable subscription (expired/suspended allowed); role permission: subscription.view. |
 | GET | `/api/catalog/:product` | Plans and features of a SAF product (activation / upgrade page) | Any signed-in user. |
 | POST | `/api/catalog/:product/request` | Ask SAF to activate a product for this business | Any signed-in user. |
-| POST | `/api/webhooks/razorpay` | Razorpay webhook (payment.captured / order.paid) | Public (no session). |
+| POST | `/api/webhooks/cashfree` | Cashfree payment webhook (PAYMENT_SUCCESS_WEBHOOK) | Public (no session). |
 
 ## Support
 
@@ -421,6 +423,7 @@ Each endpoint declares exactly one policy, enforced by the router before the han
 
 | Method | Path | Summary | Authorization |
 |---|---|---|---|
+| GET | `/api/admin/businesses/:id/team` | SAF Team members assigned to a business | SAF Super Admin only. |
 | GET | `/api/admin/me` | Your platform role, permissions and assigned businesses | SAF Super Admin only. |
 | GET | `/api/admin/platform-roles` | Platform roles with their permissions, and the permission catalog | SAF Super Admin only. |
 | POST | `/api/admin/platform-roles` | Create a custom platform role | SAF Super Admin only. |

@@ -21,14 +21,14 @@ export const platformSettingsSchema = z.object({
   reminderDays: z.array(z.number().int().min(0).max(60)).max(6),
   /** Invoice payment terms in days. */
   invoiceDueDays: z.number().int().min(0).max(60),
-  /** Allow tenants to pay renewal invoices online (needs Razorpay keys). */
+  /** Allow tenants to pay renewal invoices online (needs Cashfree keys). */
   onlinePayments: z.boolean(),
 });
 
 export type PlatformSettings = z.infer<typeof platformSettingsSchema>;
 
 export const PLATFORM_DEFAULTS: PlatformSettings = {
-  platformName: "SMARTAUTO FLEX",
+  platformName: "SAF Flow",
   supportPhone: "",
   supportEmail: "",
   supportWhatsApp: "",

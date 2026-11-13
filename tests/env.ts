@@ -9,9 +9,9 @@ export const TEST_ENV: Record<string, string> = {
   STORAGE_DRIVER: "local",
   STORAGE_LOCAL_DIR: "./storage-test",
   CRON_SECRET: "test-cron-secret-0123456789",
-  RAZORPAY_KEY_ID: "rzp_test_key",
-  RAZORPAY_KEY_SECRET: "rzp_test_secret",
-  RAZORPAY_WEBHOOK_SECRET: "whsec_test_secret",
+  CASHFREE_CLIENT_ID: "cf_test_client",
+  CASHFREE_CLIENT_SECRET: "cf_test_secret",
+  CASHFREE_ENV: "sandbox",
   LOGIN_MAX_FAILURES: "5",
   LOGIN_LOCK_MINUTES: "15",
 };

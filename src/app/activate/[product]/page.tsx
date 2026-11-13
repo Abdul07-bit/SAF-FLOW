@@ -43,7 +43,7 @@ export default function ActivatePage() {
             <h1 className="mt-1 text-2xl font-semibold tracking-tight text-slate-900">{c.product.name}</h1>
             <p className="mt-1 max-w-2xl text-sm text-slate-600">{c.product.description}</p>
             <div className="mt-6"><PlanCompare plans={c.plans} features={c.features} /></div>
-            <Card className="mt-6" title={`Activate ${c.product.name}`} subtitle="SMARTAUTO FLEX will set it up on your existing account - same login, same business.">
+            <Card className="mt-6" title={`Activate ${c.product.name}`} subtitle="SmartAutoFlex will set it up on your existing account - same login, same business.">
               {sent ? (
                 <Notice tone="good" title="Request sent">Ticket #{sent} has been raised. Our team will contact you to complete activation.</Notice>
               ) : !me.data?.user.isTenantOwner ? (

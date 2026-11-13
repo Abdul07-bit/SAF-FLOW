@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft, CheckCircle2, ImageUp, Pencil, Plus, PlusCircle, RefreshCw, XCircle } from "lucide-react";
-import { BUSINESS_CATEGORIES, PRODUCTS, PRODUCT_CODES, type ProductCode } from "@/config/catalog";
+import { BUSINESS_CATEGORIES, BUSINESS_TYPES, PRODUCTS, PRODUCT_CODES, businessType, type ProductCode } from "@/config/catalog";
 import { addDays, addMonths, fmtDate, fmtDateTime } from "@/lib/dates";
 import { formatINR } from "@/lib/money";
 import { api, errorMessage, qs, useApi } from "@/lib/client";
@@ -11,8 +11,9 @@ import { f, humanize } from "@/shared/fields";
 import { FormModal } from "@/components/forms";
 import { KpiRow, StatTile } from "@/components/charts";
 import { Badge, Button, Card, DataTable, Empty, Field, Input, KeyValue, Loadable, Notice, PageHeader, Select, StatusBadge, Tabs, Textarea, toast, useAction } from "@/components/ui";
+import { BusinessTeamCard, useMyPlatform } from "./admin-team";
 import {
-  Credentials, EventList, InvoiceStatus, PAYMENT_METHODS, Pager, ProductChips, ProductFilter, RecordPaymentModal, SearchBox, SubscriptionActions,
+  CopyButton, Credentials, EventList, InvoiceStatus, PAYMENT_METHODS, Pager, ProductChips, ProductFilter, RecordPaymentModal, SearchBox, SubscriptionActions,
   SubscriptionState, UserActions, clean, cycleLabel, productName, productShort, useDebounced, type AdminSub,
 } from "./admin-shared";
 
@@ -24,6 +25,9 @@ const linkCls = "font-medium text-brand underline-offset-2 hover:underline";
 
 export function AdminOverview() {
   const o = useApi<any>("/admin/overview", { refreshMs: 120_000 });
+  const mine = useMyPlatform();
+  const has = (k: string) => !!mine.data?.permissions.includes(k);
+  const scoped = mine.data?.role && !mine.data.role.allTenants;
   const [busy, run] = useAction();
   const runJob = () => run(async () => {
     const r = await api<{ expired: number; invoicesRaised: number; reminders: number }>("/admin/jobs/renewals", { method: "POST" });
@@ -33,10 +37,10 @@ export function AdminOverview() {
   return (
     <>
       <PageHeader
-        title="Overview" description="Every business, product and subscription on SMARTAUTO FLEX."
+        title="Overview" description={scoped ? "Your assigned businesses at a glance." : "Every business, product and subscription on SAF Flow."}
         actions={<>
-          <Button loading={busy} onClick={runJob}><RefreshCw className="h-4 w-4" /> Run renewal job</Button>
-          <Link href="/admin/businesses/new"><Button variant="primary"><PlusCircle className="h-4 w-4" /> Add new business</Button></Link>
+          {has("platform.jobs.run") && <Button loading={busy} onClick={runJob}><RefreshCw className="h-4 w-4" /> Run renewal job</Button>}
+          {has("platform.business.create") && <Link href="/admin/businesses/new"><Button variant="primary"><PlusCircle className="h-4 w-4" /> Add new business</Button></Link>}
         </>}
       />
       <Loadable state={o}>
@@ -113,17 +117,20 @@ export function AdminBusinesses() {
   const dq = useDebounced(q);
   useEffect(() => setPage(1), [dq, status, product]);
   const list = useApi<{ items: any[]; total: number }>(`/admin/businesses${qs({ q: dq, status, product, page, pageSize: 25 })}`);
+  const mine = useMyPlatform();
+  const canCreate = !!mine.data?.permissions.includes("platform.business.create");
+  const scoped = mine.data?.role && !mine.data.role.allTenants;
   return (
     <>
       <PageHeader
-        title="Business management" description="All tenants. Open a business to manage its products, plans, users and billing."
+        title="Businesses" description={scoped ? "The businesses assigned to you. Open one to manage it." : "Every business on SAF Flow. Open a business to manage its products, plans, users and billing."}
         actions={<>
           <SearchBox value={q} onChange={setQ} placeholder="Name, code, owner, phone" label="Search businesses" />
           <ProductFilter value={product} onChange={setProduct} />
           <Select aria-label="Status" className="w-36" value={status} onChange={(e) => setStatus(e.target.value)}>
             <option value="">Any status</option><option value="ACTIVE">Active</option><option value="SUSPENDED">Suspended</option><option value="CLOSED">Closed</option>
           </Select>
-          <Link href="/admin/businesses/new"><Button variant="primary"><Plus className="h-4 w-4" /> Add business</Button></Link>
+          {canCreate && <Link href="/admin/businesses/new"><Button variant="primary"><Plus className="h-4 w-4" /> Add business</Button></Link>}
         </>}
       />
       <Card pad={false}>
@@ -132,9 +139,9 @@ export function AdminBusinesses() {
             <>
               <DataTable
                 rows={d.items} rowKey={(r) => r.id}
-                empty={<Empty title={dq || status || product ? "No businesses match these filters" : "No businesses yet"} action={<Link className={linkCls} href="/admin/businesses/new">Add new business</Link>} />}
+                empty={<Empty title={dq || status || product ? "No businesses match these filters" : scoped ? "No businesses assigned to you yet" : "No businesses yet"} hint={scoped ? "Ask an administrator to assign you to a client." : undefined} action={canCreate ? <Link className={linkCls} href="/admin/businesses/new">Add new business</Link> : undefined} />}
                 columns={[
-                  { key: "n", label: "Business", render: (r) => <Link href={`/admin/businesses/${r.id}`} className="block"><span className={`block ${linkCls}`}>{r.name ?? r.code}</span><span className="text-xs text-slate-500">{humanize(r.category ?? "")}{r.city ? ` - ${r.city}` : ""}</span></Link> },
+                  { key: "n", label: "Business", render: (r) => <Link href={`/admin/businesses/${r.id}`} className="block"><span className={`block ${linkCls}`}>{r.name ?? r.code}</span><span className="text-xs text-slate-500">{businessType(r.category).label}{r.city ? ` - ${r.city}` : ""}</span></Link> },
                   { key: "c", label: "Code", render: (r) => <span className="font-mono text-[13px]">{r.code}</span> },
                   { key: "o", label: "Owner", render: (r) => <span className="block">{r.ownerName}<span className="block text-xs text-slate-500">{r.phone}</span></span> },
                   { key: "p", label: "Products & plans", render: (r) => <ProductChips products={r.products} /> },
@@ -170,15 +177,30 @@ export function AdminNewBusiness() {
   const [payment, setPayment] = useState({ method: "UPI", reference: "" });
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [created, setCreated] = useState<{ tenantId: string; code: string; managerUsername: string; temporaryPassword: string; name: string } | null>(null);
+  const [created, setCreated] = useState<{
+    tenantId: string; code: string; managerUsername: string; temporaryPassword: string | null; name: string;
+    invitation: { delivery: "email" | "link"; link: string | null } | null;
+  } | null>(null);
+  const [branches, setBranches] = useState<{ name: string; code: string; address: string; phone: string }[]>([]);
+  const [owner, setOwner] = useState<{ method: "invite" | "login_id"; delivery: "email" | "link" }>({ method: "invite", delivery: "email" });
+  const [assignIds, setAssignIds] = useState<string[]>([]);
+  const team = useApi<{ items: { id: string; fullName: string; isActive: boolean; invitation: { status: string } | null; role: { name: string; allTenants: boolean } | null }[] }>("/admin/team");
+  // Active members and members whose invitation is still pending (invite, then assign).
+  const assignable = (team.data?.items ?? []).filter((m) => (m.isActive || m.invitation?.status === "PENDING") && m.role && !m.role.allTenants);
 
   const planOf = (c: ProductCode, tier: string) => defaults.data?.plans.find((p) => p.productCode === c && p.tier === tier);
   const blank = (c: ProductCode, today: string, plans: Plan[]): Selection => {
     const p = plans.find((x) => x.productCode === c && x.tier === "BASIC");
     return { on: false, tier: "BASIC", billingCycle: "MONTHLY", setupFee: p ? String(p.setupFee / 100) : "0", startDate: today, expiryDate: "", markSetupPaid: false, markSubscriptionPaid: false };
   };
+  // Recommended products follow the business type until the admin picks products by hand.
+  const productsTouched = useRef(false);
+  const kind = businessType(profile.category);
   useEffect(() => {
-    if (defaults.data && !sel) setSel(Object.fromEntries(PRODUCT_CODES.map((c) => [c, blank(c, defaults.data!.today, defaults.data!.plans)])) as Record<ProductCode, Selection>);
+    if (defaults.data && !sel) {
+      productsTouched.current = false;
+      setSel(Object.fromEntries(PRODUCT_CODES.map((c) => [c, { ...blank(c, defaults.data!.today, defaults.data!.plans), on: kind.recommended.includes(c) }])) as Record<ProductCode, Selection>);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [defaults.data]);
 
@@ -215,6 +237,7 @@ export function AdminNewBusiness() {
     e.preventDefault();
     if (!sel) return;
     if (!chosen.length) return setError("Select at least one SAF product.");
+    if (owner.method === "invite" && !profile.email.trim()) return setError("Enter the owner's email (step 1) to send the invitation, or choose a login ID instead.");
     setBusy(true);
     setError(null);
     try {
@@ -230,6 +253,9 @@ export function AdminNewBusiness() {
             });
           }),
           ...(anyPaid ? clean({ paymentMethod: payment.method, paymentReference: payment.reference }) : {}),
+          branches: branches.filter((b) => b.name.trim()).map((b) => clean({ ...b, code: b.code.toUpperCase() })),
+          owner,
+          assignStaffIds: assignIds,
         },
       });
       setCreated({ ...r, name: profile.name });
@@ -246,35 +272,58 @@ export function AdminNewBusiness() {
       <>
         <PageHeader title="Business created" description={`${created.name} (${created.code}) is ready.`} />
         <div className="max-w-xl space-y-4">
-          <Credentials username={created.managerUsername} password={created.temporaryPassword} title="Manager credentials - hand these to the owner" />
-          <p className="text-sm text-slate-600">The same manager login opens every product activated for this business. Staff logins are created by the manager and use the format <span className="font-mono">{created.code}@name</span>.</p>
+          {created.temporaryPassword && <Credentials username={created.managerUsername} password={created.temporaryPassword} title="Owner login - hand these to the owner" />}
+          {created.invitation?.delivery === "email" && (
+            <Notice tone="good" title="Invitation sent to the owner">{created.managerUsername} will receive an email to set their password and open the workspace.</Notice>
+          )}
+          {created.invitation?.link && (
+            <Notice tone="info" title="Owner invitation link">
+              <p className="break-all font-mono text-xs">{created.invitation.link}</p>
+              <p className="mt-2">Send this to the owner. They choose their own password and sign in with {created.managerUsername}.</p>
+              <div className="mt-2"><CopyButton text={created.invitation.link} label="Copy link" /></div>
+            </Notice>
+          )}
+          <p className="text-sm text-slate-600">The owner account opens every product activated for this business. The owner then adds staff from Team &gt; Staff logins, by email invitation or with login IDs like <span className="font-mono">{created.code}@name</span>.</p>
           <div className="flex flex-wrap gap-2">
             <Link href={`/admin/businesses/${created.tenantId}`}><Button variant="primary">Open business</Button></Link>
-            <Button onClick={() => { setCreated(null); setProfile(EMPTY_PROFILE); setCode(""); setSel(null); void defaults.reload(); }}>Add another business</Button>
+            <Button onClick={() => { setCreated(null); setProfile(EMPTY_PROFILE); setCode(""); setSel(null); setBranches([]); setAssignIds([]); void defaults.reload(); }}>Add another business</Button>
           </div>
         </div>
       </>
     );
   }
 
+  const pickCategory = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const category = e.target.value;
+    setProfile((p) => ({ ...p, category }));
+    if (productsTouched.current) return;
+    const rec = businessType(category).recommended;
+    setSel((s) => s && (Object.fromEntries(PRODUCT_CODES.map((c) => [c, { ...s[c], on: rec.includes(c) }])) as Record<ProductCode, Selection>));
+  };
   const set = (k: keyof typeof EMPTY_PROFILE) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => setProfile((p) => ({ ...p, [k]: e.target.value }));
 
   return (
     <>
-      <PageHeader title="Add new business" description="Creates the tenant, activates the selected SAF products and generates the manager login." />
+      <PageHeader title="Add new business" description="Creates the workspace, activates the selected SAF products, sets up branches and invites the owner. Everything is created together or not at all." />
       <Loadable state={defaults}>
         {(d) => !sel ? null : (
           <form onSubmit={submit} className="grid gap-4 xl:grid-cols-[1fr_22rem]">
             <div className="space-y-4">
-              <Card title="Business details">
+              <Card title="1. Business information">
                 <div className="grid gap-x-4 gap-y-3 sm:grid-cols-2">
                   <Field label="Business name" required><Input required minLength={2} maxLength={120} value={profile.name} onChange={set("name")} /></Field>
-                  <Field label="Business category" required>
-                    <Select value={profile.category} onChange={set("category")}>{BUSINESS_CATEGORIES.map((c) => <option key={c} value={c}>{humanize(c)}</option>)}</Select>
+                  <Field label="Business type" required help={kind.recommended.length ? `Recommended: ${kind.recommended.map((c) => PRODUCTS[c].name).join(" + ")}` : undefined}>
+                    <Select value={profile.category} onChange={pickCategory}>
+                      {[...new Set(Object.values(BUSINESS_TYPES).map((t) => t.group))].map((g) => (
+                        <optgroup key={g} label={g}>
+                          {BUSINESS_CATEGORIES.filter((c) => BUSINESS_TYPES[c].group === g).map((c) => <option key={c} value={c}>{BUSINESS_TYPES[c].label}</option>)}
+                        </optgroup>
+                      ))}
+                    </Select>
                   </Field>
                   <Field label="Owner name" required><Input required minLength={2} maxLength={100} value={profile.ownerName} onChange={set("ownerName")} /></Field>
                   <Field label="Phone" required><Input required type="tel" inputMode="tel" value={profile.phone} onChange={set("phone")} /></Field>
-                  <Field label="Email"><Input type="email" maxLength={120} value={profile.email} onChange={set("email")} /></Field>
+                  <Field label="Owner email" required={owner.method === "invite"} help={owner.method === "invite" ? "The owner signs in with this email." : undefined}><Input type="email" maxLength={120} required={owner.method === "invite"} value={profile.email} onChange={set("email")} /></Field>
                   <Field label="GSTIN"><Input maxLength={20} value={profile.gstin} onChange={set("gstin")} /></Field>
                   <Field label="Address" className="sm:col-span-2"><Textarea rows={2} maxLength={300} value={profile.address} onChange={set("address")} /></Field>
                   <Field label="City"><Input maxLength={80} value={profile.city} onChange={set("city")} /></Field>
@@ -287,13 +336,13 @@ export function AdminNewBusiness() {
                   </Field>
                   <div className="self-center text-sm" aria-live="polite">
                     {dcode.length >= 2 && avail.data && (avail.data.available
-                      ? <span className="flex items-center gap-1.5 text-emerald-800"><CheckCircle2 className="h-4 w-4" aria-hidden /> Available. Manager login: <span className="font-mono font-semibold">{avail.data.managerUsername}</span></span>
+                      ? <span className="flex items-center gap-1.5 text-emerald-800"><CheckCircle2 className="h-4 w-4" aria-hidden /> Available.{owner.method === "login_id" && <> Owner login: <span className="font-mono font-semibold">{avail.data.managerUsername}</span></>}</span>
                       : <span className="flex items-center gap-1.5 text-red-700"><XCircle className="h-4 w-4" aria-hidden /> {avail.data.reason}</span>)}
                   </div>
                 </div>
               </Card>
 
-              <Card title="SAF products" subtitle="Select one or more. Each product has its own plan, billing cycle and renewal date.">
+              <Card title="2-3. Products and subscription" subtitle="Select one or more. Each product has its own plan, billing cycle and renewal date.">
                 <div className="space-y-3">
                   {PRODUCT_CODES.map((c) => {
                     const s = sel[c];
@@ -301,8 +350,8 @@ export function AdminNewBusiness() {
                     return (
                       <fieldset key={c} className={`rounded-xl border p-3 ${s.on ? "border-brand bg-brand-soft/40" : "border-slate-200"}`}>
                         <label className="flex items-start gap-3">
-                          <input type="checkbox" className="mt-1 h-4 w-4 accent-[var(--brand)]" checked={s.on} onChange={(e) => patch(c, { on: e.target.checked })} />
-                          <span><span className="block text-sm font-semibold text-slate-900">{PRODUCTS[c].name}</span><span className="block text-xs text-slate-600">{PRODUCTS[c].tagline}</span></span>
+                          <input type="checkbox" className="mt-1 h-4 w-4 accent-[var(--brand)]" checked={s.on} onChange={(e) => { productsTouched.current = true; patch(c, { on: e.target.checked }); }} />
+                          <span><span className="block text-sm font-semibold text-slate-900">{PRODUCTS[c].name}{kind.recommended.includes(c) && <Badge tone="info" className="ml-2 align-middle">Recommended</Badge>}</span><span className="block text-xs text-slate-600">{PRODUCTS[c].tagline}</span></span>
                         </label>
                         {s.on && (
                           <div className="mt-3 grid gap-x-4 gap-y-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -334,10 +383,55 @@ export function AdminNewBusiness() {
                   })}
                 </div>
               </Card>
+
+              <Card title="4. Branches" subtitle={`A main ${kind.branchNoun} is always created. Add more if the business runs several.`}
+                actions={<Button size="sm" onClick={() => setBranches((b) => [...b, { name: "", code: "", address: "", phone: "" }])}><Plus className="h-4 w-4" aria-hidden /> Add {kind.branchNoun}</Button>}>
+                <p className="text-sm text-slate-700"><span className="font-medium">Main Branch</span> <span className="font-mono text-xs text-slate-500">MAIN</span> - uses the business address.</p>
+                {branches.map((b, i) => (
+                  <div key={i} className="mt-3 grid gap-x-3 gap-y-2 rounded-xl border border-slate-200 p-3 sm:grid-cols-[1fr_7rem_1fr_9rem_auto]">
+                    <Field label="Branch name" required><Input required minLength={2} maxLength={80} value={b.name} onChange={(e) => setBranches((x) => x.map((y, j) => (j === i ? { ...y, name: e.target.value } : y)))} /></Field>
+                    <Field label="Code" required><Input required maxLength={12} className="font-mono uppercase" value={b.code} onChange={(e) => setBranches((x) => x.map((y, j) => (j === i ? { ...y, code: e.target.value.replace(/[^a-zA-Z0-9]/g, "") } : y)))} /></Field>
+                    <Field label="Address"><Input maxLength={300} value={b.address} onChange={(e) => setBranches((x) => x.map((y, j) => (j === i ? { ...y, address: e.target.value } : y)))} /></Field>
+                    <Field label="Phone"><Input maxLength={20} value={b.phone} onChange={(e) => setBranches((x) => x.map((y, j) => (j === i ? { ...y, phone: e.target.value } : y)))} /></Field>
+                    <div className="self-end"><Button size="sm" variant="ghost" onClick={() => setBranches((x) => x.filter((_, j) => j !== i))}>Remove</Button></div>
+                  </div>
+                ))}
+                {branches.length > 0 && <p className="mt-2 text-xs text-slate-500">Staff can switch between branches when the plan includes multi-branch management.</p>}
+              </Card>
+
+              <Card title="5. Owner account" subtitle="How the business owner gets into their workspace.">
+                <div className="space-y-2 text-sm">
+                  <label className="flex items-start gap-2"><input type="radio" name="owner" className="mt-1 accent-[var(--brand)]" checked={owner.method === "invite"} onChange={() => setOwner((o) => ({ ...o, method: "invite" }))} />
+                    <span><span className="font-medium text-slate-900">Email invitation (recommended)</span><span className="block text-slate-600">The owner receives a secure link and chooses their own password. Nobody else ever knows it.</span></span></label>
+                  {owner.method === "invite" && (
+                    <div className="ml-6">
+                      <Select value={owner.delivery} onChange={(e) => setOwner((o) => ({ ...o, delivery: e.target.value as "email" | "link" }))}>
+                        <option value="email">Email the invitation</option>
+                        <option value="link">Give me a link to share (WhatsApp etc.)</option>
+                      </Select>
+                    </div>
+                  )}
+                  <label className="flex items-start gap-2"><input type="radio" name="owner" className="mt-1 accent-[var(--brand)]" checked={owner.method === "login_id"} onChange={() => setOwner((o) => ({ ...o, method: "login_id" }))} />
+                    <span><span className="font-medium text-slate-900">Login ID with temporary password</span><span className="block text-slate-600">For owners without email: <span className="font-mono">{(code || "CODE").toUpperCase()}@manager</span>, password changed at first sign-in.</span></span></label>
+                </div>
+              </Card>
+
+              {assignable.length > 0 && (
+                <Card title="SAF Team assignment (optional)" subtitle="Members who will manage this client. Admins and auditors already see every business.">
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    {assignable.map((m) => (
+                      <label key={m.id} className="flex items-center gap-2 text-sm">
+                        <input type="checkbox" className="h-4 w-4 accent-[var(--brand)]" checked={assignIds.includes(m.id)} onChange={() => setAssignIds((x) => (x.includes(m.id) ? x.filter((y) => y !== m.id) : [...x, m.id]))} />
+                        {m.fullName} <span className="text-xs text-slate-500">{m.role?.name}</span>
+                      </label>
+                    ))}
+                  </div>
+                </Card>
+              )}
             </div>
 
             <div className="space-y-4">
-              <Card title="Summary">
+              <Card title="6. Summary">
                 {!chosen.length ? <p className="text-sm text-slate-500">No product selected yet.</p> : (
                   <>
                     <ul className="space-y-2 text-sm">
@@ -362,7 +456,16 @@ export function AdminNewBusiness() {
                 </Card>
               )}
               {error && <Notice tone="bad">{error}</Notice>}
-              <Button type="submit" variant="primary" size="lg" className="w-full" loading={busy} disabled={!!avail.data && !avail.data.available}>Create business</Button>
+              {chosen.length > 0 && (
+                <Card title="Workspace">
+                  <ul className="space-y-1 text-sm text-slate-700">
+                    <li>{1 + branches.filter((b) => b.name.trim()).length} branch(es)</li>
+                    <li>Owner: {owner.method === "invite" ? (profile.email || "email required") + (owner.delivery === "link" ? " (link)" : " (email invite)") : `${(code || "CODE").toUpperCase()}@manager`}</li>
+                    {assignIds.length > 0 && <li>{assignIds.length} SAF Team member(s) assigned</li>}
+                  </ul>
+                </Card>
+              )}
+              <Button type="submit" variant="primary" size="lg" className="w-full" loading={busy} disabled={!!avail.data && !avail.data.available}>Create business &amp; activate workspace</Button>
             </div>
           </form>
         )}
@@ -424,7 +527,7 @@ export function AdminBusinessDetail({ id }: { id: string }) {
             <>
               <PageHeader
                 title={biz.name ?? d.code}
-                description={<span className="flex flex-wrap items-center gap-2"><span className="font-mono">{d.code}</span><StatusBadge value={d.status} />{humanize(biz.category ?? "")}<span>- added {fmtDate(d.createdAt)}</span></span>}
+                description={<span className="flex flex-wrap items-center gap-2"><span className="font-mono">{d.code}</span><StatusBadge value={d.status} />{businessType(biz.category).label}<span>- added {fmtDate(d.createdAt)}</span></span>}
                 actions={d.status === "ACTIVE"
                   ? <Button variant="danger" onClick={() => setSuspending(true)}>Suspend business</Button>
                   : <Button variant="primary" loading={busy} onClick={() => run(async () => { await api(`/admin/businesses/${id}/status`, { body: { status: "ACTIVE" } }); await b.reload(); }, "Business activated")}>Activate business</Button>}
@@ -442,6 +545,7 @@ export function AdminBusinessDetail({ id }: { id: string }) {
 
               {tab === "overview" && (
                 <div className="grid gap-4 xl:grid-cols-2">
+                  <div className="xl:col-span-2"><BusinessTeamCard id={d.id} /></div>
                   <Card title="Business profile" actions={<Button size="sm" onClick={() => setEditing(true)}><Pencil className="h-3.5 w-3.5" /> Edit</Button>}>
                     <KeyValue items={[
                       ["Owner", biz.ownerName], ["Phone", biz.phone], ["Email", biz.email], ["GSTIN", biz.gstin],

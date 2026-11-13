@@ -9,9 +9,10 @@
  */
 import { withPlatform, withTenant } from "../src/server/db";
 import { token } from "../src/server/core/ids";
-import { createBusiness, type NewBusinessInput } from "../src/server/core/tenancy";
+import type { z } from "zod";
+import { createBusiness, newBusinessSchema } from "../src/server/core/tenancy";
 
-type Demo = Omit<NewBusinessInput, "products"> & { products: NewBusinessInput["products"] };
+type Demo = z.input<typeof newBusinessSchema>;
 
 const paid = { markSetupPaid: true, markSubscriptionPaid: true } as const;
 
@@ -112,7 +113,7 @@ export async function seedDemo(log = console.log) {
     if (existing) {
       log(`  ${input.code}: already exists, skipped`);
     } else {
-      const created = await withPlatform((db) => createBusiness(db, input, null));
+      const created = await withPlatform((db) => createBusiness(db, newBusinessSchema.parse(input), null));
       tenantId = created.tenantId;
       log(`  ${input.code}: ${input.name} - login ${created.managerUsername} / temporary password ${created.temporaryPassword}`);
     }

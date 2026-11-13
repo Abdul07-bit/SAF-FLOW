@@ -125,7 +125,7 @@ async function drawCard(doc: PDFDocument, page: PDFPage, x0: number, y0: number,
 export async function renderIdCards(cards: CardData[]): Promise<Uint8Array> {
   const doc = await PDFDocument.create();
   doc.setTitle(cards.length === 1 ? `ID card - ${safe(cards[0].employeeName)}` : "Staff ID cards");
-  doc.setCreator("SMARTAUTO FLEX");
+  doc.setCreator("SmartAutoFlex");
   const fonts = { bold: await doc.embedFont(StandardFonts.HelveticaBold), reg: await doc.embedFont(StandardFonts.Helvetica) };
 
   if (cards.length === 1) {

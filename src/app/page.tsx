@@ -1,5 +1,6 @@
 "use client";
 
+import { SafLogo } from "@/components/brand";
 import Link from "next/link";
 import { useEffect } from "react";
 import { ArrowRight, BedDouble, Lock, ScanBarcode, UtensilsCrossed } from "lucide-react";
@@ -34,17 +35,17 @@ export default function PortalPage() {
     <div className="min-h-screen">
       <header className="flex h-14 items-center justify-between border-b border-slate-200 bg-white px-4 sm:px-6">
         <div className="flex items-center gap-2.5">
-          <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-brand text-xs font-bold text-brand-ink">SAF</span>
-          <span className="text-sm font-semibold tracking-tight text-slate-900">SMARTAUTO FLEX</span>
+          <SafLogo className="h-8" decorative />
+          <span className="text-sm font-semibold tracking-tight text-slate-900">SAF Flow</span>
         </div>
         <UserMenu name={user.fullName} sub={user.username} showPortal={false} />
       </header>
 
       <main className="mx-auto max-w-5xl px-4 py-8 sm:px-6">
-        <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Welcome to SMARTAUTO FLEX</h1>
+        <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Welcome to SAF Flow</h1>
         <p className="mt-1 text-sm text-slate-600">{tenant?.name} - choose an application to open.</p>
         {tenant?.status !== "ACTIVE" && (
-          <div className="mt-4"><Notice tone="bad" title="This business account is suspended">Please contact SMARTAUTO FLEX support.</Notice></div>
+          <div className="mt-4"><Notice tone="bad" title="This business account is suspended">Please contact SmartAutoFlex support.</Notice></div>
         )}
 
         <h2 className="mt-8 text-xs font-semibold uppercase tracking-wider text-slate-500">Available applications</h2>

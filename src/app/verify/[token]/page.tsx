@@ -56,7 +56,7 @@ export default function VerifyPage() {
           </div>
         )}
       </div>
-      <p className="mt-4 text-center text-[11px] text-slate-400">Staff verification by SMARTAUTO FLEX</p>
+      <p className="mt-4 text-center text-[11px] text-slate-400">Staff verification by SmartAutoFlex</p>
     </main>
   );
 }

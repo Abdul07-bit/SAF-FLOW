@@ -56,7 +56,7 @@ export function buildOpenApi(routes: RouteDef[]) {
   return {
     openapi: "3.1.0",
     info: {
-      title: "SMARTAUTO FLEX API",
+      title: "SAF Flow API",
       version: "1.0.0",
       description:
         "Multi-tenant API for SAF Super Admin, SAF Dine Flow, SAF Stay Flow and SAF Bill Flow. " +

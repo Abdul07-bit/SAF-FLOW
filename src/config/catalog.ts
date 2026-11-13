@@ -1,5 +1,5 @@
 /**
- * SMARTAUTO FLEX product catalog - the single source of truth for
+ * SAF Flow product catalog - the single source of truth for
  *   products -> features (per tier) -> permissions -> system roles -> default plans.
  *
  * The seed writes this into the database (feature_catalog, permissions, roles,
@@ -53,6 +53,21 @@ export interface ProductTheme {
   sidebarInk: string;
   sidebarMuted: string;
 }
+
+/**
+ * SAF brand palette, taken from the SAF logo (navy #031527 + teal #019a97).
+ * Primary actions use a deeper teal so white text on buttons stays readable (4.85:1).
+ * Every product and the platform admin share it.
+ */
+export const SAF_THEME: ProductTheme = {
+  brand: "#017f7c",
+  brandInk: "#ffffff",
+  brandSoft: "#e3f4f3",
+  accent: "#14c4bd",
+  sidebar: "#031527",
+  sidebarInk: "#e3edf2",
+  sidebarMuted: "#8fa8ba",
+};
 
 export interface ProductDef {
   code: ProductCode;
@@ -118,15 +133,7 @@ const dine: ProductDef = {
   shortName: "Dine Flow",
   tagline: "Restaurant & food-service management",
   description: "POS, QR ordering, tables, waiter app, kitchen display, cashier, menu and inventory for restaurants.",
-  theme: {
-    brand: "#c2410c",
-    brandInk: "#ffffff",
-    brandSoft: "#fff1e6",
-    accent: "#f59e0b",
-    sidebar: "#2b1409",
-    sidebarInk: "#fde9d9",
-    sidebarMuted: "#c79b80",
-  },
+  theme: SAF_THEME,
   features: features(
     "dine",
     [
@@ -217,15 +224,7 @@ const stay: ProductDef = {
   shortName: "Stay Flow",
   tagline: "Hotel & accommodation management",
   description: "Rooms, reservations, front desk, guest profiles, housekeeping, room billing and occupancy reporting.",
-  theme: {
-    brand: "#0f5257",
-    brandInk: "#ffffff",
-    brandSoft: "#e6f2f1",
-    accent: "#b8912f",
-    sidebar: "#0a2a2d",
-    sidebarInk: "#e7f1ef",
-    sidebarMuted: "#8fb3ae",
-  },
+  theme: SAF_THEME,
   features: features(
     "stay",
     [
@@ -329,15 +328,7 @@ const bill: ProductDef = {
   shortName: "Bill Flow",
   tagline: "Retail billing & inventory",
   description: "Barcode POS billing, product catalog, stock, customers, purchases and sales reporting for shops.",
-  theme: {
-    brand: "#1d4ed8",
-    brandInk: "#ffffff",
-    brandSoft: "#e8efff",
-    accent: "#059669",
-    sidebar: "#0f172a",
-    sidebarInk: "#e2e8f0",
-    sidebarMuted: "#94a3b8",
-  },
+  theme: SAF_THEME,
   features: features(
     "bill",
     [
@@ -446,12 +437,39 @@ export const BUSINESS_CATEGORIES = [
 ] as const;
 export type BusinessCategory = (typeof BUSINESS_CATEGORIES)[number];
 
-export const PLATFORM_THEME: ProductTheme = {
-  brand: "#1e3a8a",
-  brandInk: "#ffffff",
-  brandSoft: "#e8edf8",
-  accent: "#0ea5e9",
-  sidebar: "#0b1730",
-  sidebarInk: "#e2e8f5",
-  sidebarMuted: "#8ea0c4",
+export interface BusinessTypeDef {
+  label: string;
+  group: "Food & beverage" | "Hospitality" | "Retail" | "Other";
+  /** Products the onboarding wizard pre-selects for this type. */
+  recommended: ProductCode[];
+  /** What this type calls a branch ("outlet", "property", "store"). */
+  branchNoun: string;
+}
+
+/**
+ * Business-type registry. Drives onboarding defaults (recommended products,
+ * branch wording) and grouping in the admin panel. Adding a type here and to
+ * BUSINESS_CATEGORIES is enough: the column is free text, no migration needed.
+ */
+export const BUSINESS_TYPES: Record<BusinessCategory, BusinessTypeDef> = {
+  RESTAURANT: { label: "Restaurant", group: "Food & beverage", recommended: ["dine", "bill"], branchNoun: "outlet" },
+  CAFE: { label: "Cafe", group: "Food & beverage", recommended: ["dine", "bill"], branchNoun: "outlet" },
+  CLOUD_KITCHEN: { label: "Cloud kitchen", group: "Food & beverage", recommended: ["dine"], branchNoun: "kitchen" },
+  BAKERY: { label: "Bakery", group: "Food & beverage", recommended: ["bill", "dine"], branchNoun: "outlet" },
+  HOTEL: { label: "Hotel", group: "Hospitality", recommended: ["stay", "dine"], branchNoun: "property" },
+  RESORT: { label: "Resort", group: "Hospitality", recommended: ["stay", "dine"], branchNoun: "property" },
+  LODGE: { label: "Lodge", group: "Hospitality", recommended: ["stay"], branchNoun: "property" },
+  HOMESTAY: { label: "Homestay", group: "Hospitality", recommended: ["stay"], branchNoun: "property" },
+  RETAIL: { label: "Retail store", group: "Retail", recommended: ["bill"], branchNoun: "store" },
+  SUPERMARKET: { label: "Supermarket", group: "Retail", recommended: ["bill"], branchNoun: "store" },
+  PHARMACY: { label: "Pharmacy", group: "Retail", recommended: ["bill"], branchNoun: "store" },
+  ELECTRONICS: { label: "Electronics store", group: "Retail", recommended: ["bill"], branchNoun: "store" },
+  APPAREL: { label: "Apparel store", group: "Retail", recommended: ["bill"], branchNoun: "store" },
+  OTHER: { label: "Other", group: "Other", recommended: [], branchNoun: "branch" },
 };
+
+export function businessType(category: string | null | undefined): BusinessTypeDef {
+  return BUSINESS_TYPES[(category ?? "OTHER") as BusinessCategory] ?? BUSINESS_TYPES.OTHER;
+}
+
+export const PLATFORM_THEME: ProductTheme = SAF_THEME;

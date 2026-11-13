@@ -6,6 +6,7 @@ import { conflict } from "../http/errors";
 import { hashPassword } from "../auth/password";
 import { isValidBusinessCode, temporaryPassword } from "./ids";
 import { createSubscription } from "./subscriptions";
+import { inviteAccount } from "./invitations";
 
 const isoDate = z.string().refine(isISODate, "Use YYYY-MM-DD");
 
@@ -22,7 +23,7 @@ export const productSelectionSchema = z.object({
   markSubscriptionPaid: z.boolean().optional(),
 });
 
-export const paymentMethodSchema = z.enum(["CASH", "UPI", "CARD", "BANK_TRANSFER", "CHEQUE", "RAZORPAY", "OTHER"]);
+export const paymentMethodSchema = z.enum(["CASH", "UPI", "CARD", "BANK_TRANSFER", "CHEQUE", "CASHFREE", "OTHER"]);
 
 export const businessProfileSchema = z.object({
   name: z.string().trim().min(2).max(120),
@@ -50,6 +51,24 @@ export const newBusinessSchema = businessProfileSchema.extend({
     .refine((a) => new Set(a.map((p) => p.productCode)).size === a.length, "Each product can be selected once"),
   paymentMethod: paymentMethodSchema.optional(),
   paymentReference: z.string().max(100).optional(),
+  /** Branches besides the main one (step 4 of onboarding). */
+  branches: z.array(z.object({
+    name: z.string().trim().min(2).max(80),
+    code: z.string().trim().toUpperCase().regex(/^[A-Z0-9]{2,12}$/, "Branch code: 2-12 letters or digits"),
+    address: z.string().trim().max(300).optional(),
+    phone: z.string().trim().max(20).optional(),
+  })).max(20).default([]),
+  /**
+   * Owner account (step 5). "invite": the owner gets an email invitation and
+   * sets their own password (needs the business email). "login_id": a
+   * CODE@manager login with a one-time temporary password.
+   */
+  owner: z.object({
+    method: z.enum(["invite", "login_id"]).default("login_id"),
+    delivery: z.enum(["email", "link"]).default("email"),
+  }).default({ method: "login_id", delivery: "email" }),
+  /** SAF Team members to assign to the new business right away. */
+  assignStaffIds: z.array(z.uuid()).max(20).default([]),
 });
 
 export type NewBusinessInput = z.infer<typeof newBusinessSchema>;
@@ -121,19 +140,38 @@ export async function createBusiness(db: Tx, input: NewBusinessInput, actor: { i
     },
   });
 
-  const password = temporaryPassword();
-  const username = `${input.code}@manager`;
-  await db.user.create({
-    data: {
-      tenantId: tenant.id, kind: "TENANT", username, passwordHash: await hashPassword(password),
-      fullName: input.ownerName, phone: input.phone, email: input.email || null,
-      isTenantOwner: true, mustChangePassword: true,
-    },
-  });
+  const mainCode = "MAIN";
+  for (const b of input.branches) {
+    if (b.code === mainCode) throw conflict("Branch code MAIN is used by the main branch.");
+    await db.branch.create({ data: { tenantId: tenant.id, name: b.name, code: b.code, address: b.address || null, phone: b.phone || null } });
+  }
+
+  let username: string;
+  let password: string | null = null;
+  let invitation: { delivery: "email" | "link"; link: string | null } | null = null;
+  if (input.owner.method === "invite") {
+    if (!input.email) throw conflict("Enter the owner email to send an invitation.");
+    const r = await inviteAccount(db, {
+      email: input.email, fullName: input.ownerName, phone: input.phone, kind: "TENANT", tenantId: tenant.id,
+      isTenantOwner: true, delivery: input.owner.delivery, invitedById: actor?.id ?? null,
+    });
+    username = r.user.username;
+    invitation = { delivery: r.delivery, link: r.link };
+  } else {
+    password = temporaryPassword();
+    username = `${input.code}@manager`;
+    await db.user.create({
+      data: {
+        tenantId: tenant.id, kind: "TENANT", username, passwordHash: await hashPassword(password),
+        fullName: input.ownerName, phone: input.phone, email: input.email || null,
+        isTenantOwner: true, mustChangePassword: true,
+      },
+    });
+  }
 
   for (const sel of input.products) {
     await addProductToTenant(db, tenant.id, sel, { method: input.paymentMethod, reference: input.paymentReference }, actor);
   }
 
-  return { tenantId: tenant.id, code: tenant.code, managerUsername: username, temporaryPassword: password };
+  return { tenantId: tenant.id, code: tenant.code, managerUsername: username, temporaryPassword: password, invitation };
 }

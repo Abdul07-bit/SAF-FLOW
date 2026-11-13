@@ -15,6 +15,8 @@ export interface NavItem {
   feature?: string | string[];
   /** Any-of role permissions (relative keys). */
   permission?: string | string[];
+  /** Admin panel only: platform permission needed to see the item. */
+  platform?: string;
 }
 export interface NavSection {
   title: string;
@@ -163,35 +165,43 @@ export const ADMIN_NAV: NavSection[] = [
   {
     title: "Platform",
     items: [
-      { slug: "", label: "Overview", icon: LayoutDashboard },
-      { slug: "businesses", label: "Business management", icon: Building2 },
-      { slug: "businesses/new", label: "Add new business", icon: PlusCircle },
-      { slug: "products", label: "Product management", icon: Package },
+      { slug: "", label: "Overview", icon: LayoutDashboard, platform: "platform.dashboard.read" },
+      { slug: "businesses", label: "Businesses", icon: Building2, platform: "platform.business.read" },
+      { slug: "businesses/new", label: "Add business", icon: PlusCircle, platform: "platform.business.create" },
+      { slug: "products", label: "Products & modules", icon: Package, platform: "platform.catalog.read" },
     ],
   },
   {
     title: "Commercial",
     items: [
-      { slug: "subscriptions", label: "Subscription management", icon: CalendarClock },
-      { slug: "plans", label: "Plans and pricing", icon: Tags },
-      { slug: "features", label: "Feature management", icon: SlidersHorizontal },
-      { slug: "payments", label: "Payments", icon: CreditCard },
-      { slug: "revenue", label: "Revenue analytics", icon: LineChart },
+      { slug: "subscriptions", label: "Subscriptions", icon: CalendarClock, platform: "platform.subscription.read" },
+      { slug: "plans", label: "Plans and pricing", icon: Tags, platform: "platform.catalog.read" },
+      { slug: "features", label: "Feature management", icon: SlidersHorizontal, platform: "platform.catalog.read" },
+      { slug: "payments", label: "Payments", icon: CreditCard, platform: "platform.billing.read" },
+      { slug: "revenue", label: "Revenue analytics", icon: LineChart, platform: "platform.revenue.read" },
     ],
   },
   {
-    title: "People",
+    title: "SAF Team",
     items: [
-      { slug: "managers", label: "Manager accounts", icon: UserCog },
-      { slug: "employees", label: "Employee overview", icon: UsersRound },
+      { slug: "team", label: "Team members", icon: UsersRound, platform: "platform.staff.read" },
+      { slug: "roles", label: "Roles & permissions", icon: ShieldCheck, platform: "platform.staff.read" },
+    ],
+  },
+  {
+    title: "Client accounts",
+    items: [
+      { slug: "managers", label: "Owner accounts", icon: UserCog, platform: "platform.users.read" },
+      { slug: "employees", label: "Client employees", icon: Users, platform: "platform.users.read" },
     ],
   },
   {
     title: "Operations",
     items: [
-      { slug: "support", label: "Support", icon: LifeBuoy },
-      { slug: "audit", label: "Audit logs", icon: ShieldCheck },
-      { slug: "settings", label: "Global settings", icon: Settings },
+      { slug: "support", label: "Support center", icon: LifeBuoy, platform: "platform.support.read" },
+      { slug: "audit", label: "Audit logs", icon: ScrollText, platform: "platform.audit.read" },
+      { slug: "system", label: "System health", icon: Gauge, platform: "platform.settings.read" },
+      { slug: "settings", label: "Settings", icon: Settings, platform: "platform.settings.read" },
     ],
   },
 ];

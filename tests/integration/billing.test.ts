@@ -1,7 +1,8 @@
 import { createHmac } from "node:crypto";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { addDays, addMonths, istDate, todayIST } from "@/lib/dates";
 import { withTenant } from "@/server/db";
+import { handleRequest } from "@/server/api";
 import { api, createBusiness, expectError } from "../helpers";
 import { TEST_ENV } from "../env";
 
@@ -68,46 +69,84 @@ describe("subscriptions & billing", () => {
     expect(billing.body.plans).toHaveLength(2);
   });
 
-  it("online payment: verified Razorpay signature pays the renewal invoice and extends the subscription", async () => {
+  it("online payment: Cashfree checkout, server-side confirmation, amount checked, replays harmless", async () => {
     const biz = await createBusiness([{ productCode: "bill", tier: "BASIC", startDate: addDays(todayIST(), -27), expiryDate: addDays(todayIST(), 3), markSetupPaid: true, markSubscriptionPaid: true }]);
     await api("POST", "/jobs/renewals", { headers: { "x-cron-secret": TEST_ENV.CRON_SECRET } });
     const open = (await api("GET", `/admin/invoices?tenantId=${biz.tenantId}&status=ISSUED`, { cookie: biz.admin })).body.items;
     expect(open).toHaveLength(1);
     const inv = open[0];
 
-    // Simulate the pending gateway order that /checkout creates after calling Razorpay
-    const orderId = `order_${biz.code}`;
-    await withTenant(biz.tenantId, (db) =>
-      db.payment.create({ data: { tenantId: biz.tenantId, invoiceId: inv.id, subscriptionId: inv.subscriptionId, amount: inv.total, method: "RAZORPAY", status: "PENDING", gatewayOrderId: orderId } }),
-    );
-    const paymentId = "pay_test_1";
-    expectError(await api("POST", "/bill/billing/razorpay/verify", { cookie: biz.manager, body: { orderId, paymentId, signature: "0".repeat(64) } }), 400, "INVALID_SIGNATURE");
-    const signature = createHmac("sha256", TEST_ENV.RAZORPAY_KEY_SECRET).update(`${orderId}|${paymentId}`).digest("hex");
-    const ok = await api("POST", "/bill/billing/razorpay/verify", { cookie: biz.manager, body: { orderId, paymentId, signature } });
-    expect(ok.status, JSON.stringify(ok.body)).toBe(200);
-    // Replays are harmless
-    expect((await api("POST", "/bill/billing/razorpay/verify", { cookie: biz.manager, body: { orderId, paymentId, signature } })).status).toBe(200);
+    // Fake Cashfree at the network boundary.
+    let orderBody: any = null;
+    let gatewayStatus = "ACTIVE";
+    let paidAmount = 0;
+    const realFetch = globalThis.fetch;
+    const spy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input: any, init?: any) => {
+      const url = String(input);
+      if (!url.startsWith("https://sandbox.cashfree.com/pg/")) return realFetch(input, init);
+      expect((init.headers as Record<string, string>)["x-client-secret"]).toBe(TEST_ENV.CASHFREE_CLIENT_SECRET);
+      const json = (b: unknown) => new Response(JSON.stringify(b), { status: 200, headers: { "content-type": "application/json" } });
+      if (url.endsWith("/orders") && init.method === "POST") {
+        orderBody = JSON.parse(init.body);
+        return json({ order_id: orderBody.order_id, cf_order_id: 991, payment_session_id: "session_test_1", order_status: "ACTIVE" });
+      }
+      if (url.endsWith("/payments")) return json([{ cf_payment_id: 5550001, payment_status: "SUCCESS", payment_amount: paidAmount }]);
+      return json({ order_status: gatewayStatus });
+    });
+    try {
+      const co = await api("POST", `/bill/billing/invoices/${inv.id}/checkout`, { cookie: biz.manager });
+      expect(co.status, JSON.stringify(co.body)).toBe(200);
+      expect(co.body).toMatchObject({ paymentSessionId: "session_test_1", mode: "sandbox", amount: inv.total });
+      expect(orderBody).toMatchObject({ order_amount: inv.total / 100, order_currency: "INR", customer_details: { customer_phone: "9876543210" } });
+      expect(orderBody.order_meta.return_url).toContain("/bill/subscription?cf_order={order_id}");
+      const orderId = co.body.orderId as string;
+      expect(orderId).toMatch(/^[A-Za-z0-9_-]{3,45}$/);
+
+      // Not paid yet: nothing settles.
+      expect((await api("POST", "/bill/billing/cashfree/confirm", { cookie: biz.manager, body: { orderId } })).body.status).toBe("ACTIVE");
+      // Gateway says PAID but for the wrong amount: refused.
+      gatewayStatus = "PAID";
+      paidAmount = 1;
+      expectError(await api("POST", "/bill/billing/cashfree/confirm", { cookie: biz.manager, body: { orderId } }), 409);
+      paidAmount = inv.total / 100;
+      const ok = await api("POST", "/bill/billing/cashfree/confirm", { cookie: biz.manager, body: { orderId } });
+      expect(ok.body, JSON.stringify(ok.body)).toEqual({ status: "PAID" });
+      expect((await api("POST", "/bill/billing/cashfree/confirm", { cookie: biz.manager, body: { orderId } })).body.status).toBe("PAID");
+
+      // Another business cannot confirm (or even see) this order.
+      const other = await createBusiness([{ productCode: "bill", tier: "BASIC" }]);
+      expectError(await api("POST", "/bill/billing/cashfree/confirm", { cookie: other.manager, body: { orderId } }), 404);
+    } finally {
+      spy.mockRestore();
+    }
 
     expect((await api("GET", `/admin/invoices/${inv.id}`, { cookie: biz.admin })).body.invoice.status).toBe("PAID");
     const sub = await subOf(biz);
     expect(istDate(new Date(sub.currentPeriodEnd))).toBe(addDays(addMonths(addDays(todayIST(), 4), 1), -1));
-    const pays = await api("GET", `/admin/payments?tenantId=${biz.tenantId}&method=RAZORPAY`, { cookie: biz.admin });
+    const pays = await api("GET", `/admin/payments?tenantId=${biz.tenantId}&method=CASHFREE`, { cookie: biz.admin });
     expect(pays.body.items).toHaveLength(1);
+    expect(pays.body.items[0].reference).toBe("5550001");
   });
 
-  it("webhook: rejects bad signatures, settles on payment.captured", async () => {
+  it("webhook: rejects bad signatures, settles on PAYMENT_SUCCESS_WEBHOOK", async () => {
     const biz = await createBusiness([{ productCode: "dine", tier: "BASIC" }]);
     const inv = (await api("GET", `/admin/invoices?tenantId=${biz.tenantId}&status=ISSUED`, { cookie: biz.admin })).body.items.find((i: any) => i.kind === "SETUP");
-    const orderId = `order_wh_${biz.code}`;
+    const orderId = `wh-${biz.code}`;
     await withTenant(biz.tenantId, (db) =>
-      db.payment.create({ data: { tenantId: biz.tenantId, invoiceId: inv.id, amount: inv.total, method: "RAZORPAY", status: "PENDING", gatewayOrderId: orderId } }),
+      db.payment.create({ data: { tenantId: biz.tenantId, invoiceId: inv.id, amount: inv.total, method: "CASHFREE", status: "PENDING", gatewayOrderId: orderId } }),
     );
-    const raw = JSON.stringify({ event: "payment.captured", payload: { payment: { entity: { id: "pay_wh_1", order_id: orderId } } } });
+    // Amounts as Cashfree sends them (rupees, two decimals): the signature covers these exact bytes.
+    const amt = (inv.total / 100).toFixed(2);
+    const raw = `{"data":{"order":{"order_id":"${orderId}","order_amount":${amt}},"payment":{"cf_payment_id":7770001,"payment_status":"SUCCESS","payment_amount":${amt}}},"event_time":"2026-11-13T10:00:00+05:30","type":"PAYMENT_SUCCESS_WEBHOOK"}`;
+    const ts = String(Date.now());
     const post = (sig: string) =>
-      api("POST", "/webhooks/razorpay", { headers: { "x-razorpay-signature": sig, "content-type": "application/json" }, body: JSON.parse(raw) });
-    expectError(await post("deadbeef"), 400, "INVALID_SIGNATURE");
-    const good = createHmac("sha256", TEST_ENV.RAZORPAY_WEBHOOK_SECRET).update(raw).digest("hex");
+      handleRequest(new Request("http://localhost:3000/api/webhooks/cashfree", {
+        method: "POST", body: raw, headers: { "content-type": "application/json", "x-webhook-timestamp": ts, "x-webhook-signature": sig },
+      }));
+    expect((await post("deadbeef")).status).toBe(400);
+    const good = createHmac("sha256", TEST_ENV.CASHFREE_CLIENT_SECRET).update(ts + raw).digest("base64");
     expect((await post(good)).status).toBe(200);
+    expect((await post(good)).status).toBe(200); // retries are harmless
     expect((await api("GET", `/admin/invoices/${inv.id}`, { cookie: biz.admin })).body.invoice.status).toBe("PAID");
   });
 
