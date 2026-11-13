@@ -154,12 +154,16 @@ describe("API authorisation policy (lint)", () => {
       "GET /docs/openapi.json",
       "GET /files/*key",
       "GET /health",
+      // Vercel Cron calls the renewal job with GET + Authorization: Bearer <CRON_SECRET>
+      "GET /jobs/renewals",
       "GET /public/dine/menu/:qrToken",
       "GET /public/dine/orders/:token",
       "GET /public/invoice/bill/:token",
       "GET /public/invoice/dine/:token",
       "GET /public/invoice/stay/:token",
       "GET /public/verify/:token",
+      // Android app-link verification (served as /.well-known/assetlinks.json)
+      "GET /well-known/assetlinks",
       // Email identity: invite / reset link handling and reset requests (rate limited, tokens verified with Supabase)
       "POST /auth/link/complete",
       "POST /auth/link/inspect",

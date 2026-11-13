@@ -37,7 +37,8 @@ if (env.PUBLIC_API_DOCS === "1") warnings.push("PUBLIC_API_DOCS=1 publishes the 
 if (env.PRISMA_LOG === "1") warnings.push("PRISMA_LOG=1 writes every SQL query to the logs");
 if (env.SAF_MFA_REQUIRED !== undefined && !/platform/.test(env.SAF_MFA_REQUIRED)) errors.push("SAF_MFA_REQUIRED must include 'platform' (SAF Team accounts must use MFA)");
 if (env.CASHFREE_CLIENT_ID && env.CASHFREE_ENV !== "production") warnings.push("CASHFREE_ENV is not 'production' (sandbox keys)");
-if (env.STORAGE_DRIVER !== "s3") warnings.push("STORAGE_DRIVER is not s3: files live on one server's disk (backups and scaling)");
+if (env.VERCEL && env.STORAGE_DRIVER !== "s3") errors.push("STORAGE_DRIVER must be s3 on Vercel (no permanent disk): use Supabase Storage's S3 endpoint");
+else if (env.STORAGE_DRIVER !== "s3") warnings.push("STORAGE_DRIVER is not s3: files live on one server's disk (backups and scaling)");
 if (env.NEXT_PUBLIC_SUPABASE_URL && !env.SUPABASE_SECRET_KEY) warnings.push("SUPABASE_SECRET_KEY missing: invitations and admin resets are disabled");
 for (const k of Object.keys(env)) {
   if (k.startsWith("NEXT_PUBLIC_") && /SECRET|SERVICE_ROLE|PRIVATE|PASSWORD/i.test(k)) errors.push(`${k}: secrets must never use the NEXT_PUBLIC_ prefix (it is shipped to browsers)`);

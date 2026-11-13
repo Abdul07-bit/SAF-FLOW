@@ -18,6 +18,9 @@ interface Driver {
 const CONTENT_TYPES: Record<string, string> = { png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg" };
 
 function localDriver(): Driver {
+  // Serverless hosts (Vercel) have no permanent disk: files would vanish.
+  if (process.env.VERCEL)
+    throw new Error("File storage is not configured: set STORAGE_DRIVER=s3 (for example Supabase Storage) on Vercel.");
   const root = path.resolve(process.env.STORAGE_LOCAL_DIR || "./storage");
   const resolve = (key: string) => {
     const full = path.resolve(root, key);

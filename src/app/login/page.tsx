@@ -82,6 +82,7 @@ export default function LoginPage() {
             <Button type="submit" variant="primary" size="lg" className="w-full" loading={busy}>Sign in</Button>
           </div>
           <p className="mt-6 text-sm"><a href="/forgot-password" className="font-medium text-brand hover:underline">Forgot your password?</a></p>
+          <p className="mt-3 text-sm"><a href="/download" className="font-medium text-brand hover:underline">Get the SAF Flow app (Android, computer, iPhone)</a></p>
           <p className="mt-1 text-xs text-slate-500">Staff who sign in with a login ID: ask your manager to reset it.</p>
         </form>
       </main>

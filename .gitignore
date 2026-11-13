@@ -12,3 +12,8 @@ next-env.d.ts
 npm-debug.log*
 .DS_Store
 storage-test/
+
+# Android signing keys must never be committed
+*.keystore
+*.jks
+signing-key-info.txt

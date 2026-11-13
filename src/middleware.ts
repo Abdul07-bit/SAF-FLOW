@@ -5,7 +5,7 @@ import { NextResponse, type NextRequest } from "next/server";
  * login page. It is NOT a security boundary - every API route authenticates
  * and authorises on its own (see src/server/http/router.ts).
  */
-const PUBLIC_PREFIXES = ["/login", "/forgot-password", "/auth/", "/m/", "/invoice/", "/verify/", "/sw.js", "/offline.html", "/manifest.webmanifest", "/icons/"];
+const PUBLIC_PREFIXES = ["/login", "/forgot-password", "/auth/", "/m/", "/invoice/", "/verify/", "/sw.js", "/offline.html", "/manifest.webmanifest", "/icons/", "/download", "/downloads/", "/.well-known/", "/brand/"];
 
 export function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;

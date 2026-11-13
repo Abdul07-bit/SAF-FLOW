@@ -39,20 +39,55 @@ route({
   },
 });
 
+/**
+ * Scheduled renewal job. Accepts the secret as `x-cron-secret` (docker cron
+ * service) or `Authorization: Bearer <CRON_SECRET>` (Vercel Cron, which calls
+ * with GET). Compared in constant time.
+ */
+async function renewalJob(ctx: { req: Request }) {
+  const secret = process.env.CRON_SECRET || "";
+  const bearer = (ctx.req.headers.get("authorization") || "").replace(/^Bearer\s+/i, "");
+  const given = ctx.req.headers.get("x-cron-secret") || bearer;
+  const ok = secret.length >= 12 && given.length === secret.length && timingSafeEqual(Buffer.from(given), Buffer.from(secret));
+  if (!ok) throw new HttpError(401, "UNAUTHENTICATED", "Invalid cron secret.");
+  return withPlatform(async (db) => {
+    const result = await runRenewalJob(db);
+    await writeAudit(db, { action: "jobs.renewals", meta: result });
+    return result;
+  });
+}
+
 route({
   method: "POST", path: "/jobs/renewals", tag: "system",
-  summary: "Scheduled renewal job (expire lapsed subscriptions, raise renewal invoices, send reminders). Requires x-cron-secret.",
+  summary: "Scheduled renewal job (expire lapsed subscriptions, raise renewal invoices, send reminders). Requires the cron secret.",
   auth: { public: true }, rateLimit: { limit: 10, windowMs: 60_000 }, audit: false,
-  handler: async (ctx) => {
-    const secret = process.env.CRON_SECRET || "";
-    const given = ctx.req.headers.get("x-cron-secret") || "";
-    const ok = secret.length >= 12 && given.length === secret.length && timingSafeEqual(Buffer.from(given), Buffer.from(secret));
-    if (!ok) throw new HttpError(401, "UNAUTHENTICATED", "Invalid cron secret.");
-    return withPlatform(async (db) => {
-      const result = await runRenewalJob(db);
-      await writeAudit(db, { action: "jobs.renewals", meta: result });
-      return result;
-    });
+  handler: renewalJob,
+});
+
+route({
+  method: "GET", path: "/jobs/renewals", tag: "system",
+  summary: "Same job for Vercel Cron (GET with Authorization: Bearer <CRON_SECRET>).",
+  auth: { public: true }, rateLimit: { limit: 10, windowMs: 60_000 }, audit: false,
+  handler: renewalJob,
+});
+
+/**
+ * Android app link verification (served at /.well-known/assetlinks.json via a
+ * rewrite). Lets the SAF Flow APK open the site full-screen without a browser
+ * bar. Configured with ANDROID_PACKAGE_NAME and ANDROID_CERT_SHA256 (the APK
+ * signing certificate fingerprint; several may be given, comma separated).
+ */
+route({
+  method: "GET", path: "/well-known/assetlinks", tag: "system", summary: "Digital Asset Links for the Android app",
+  auth: { public: true },
+  handler: () => {
+    const pkg = (process.env.ANDROID_PACKAGE_NAME || "").trim();
+    const prints = (process.env.ANDROID_CERT_SHA256 || "").split(",").map((s) => s.trim().toUpperCase()).filter((s) => /^([0-9A-F]{2}:){31}[0-9A-F]{2}$/.test(s));
+    if (!/^[a-z][a-z0-9_]*(\.[a-z0-9_]+)+$/.test(pkg) || !prints.length) return [];
+    return [{
+      relation: ["delegate_permission/common.handle_all_urls"],
+      target: { namespace: "android_app", package_name: pkg, sha256_cert_fingerprints: prints },
+    }];
   },
 });
 

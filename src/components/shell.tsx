@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
-import { Bell, ChevronDown, Grid2x2, KeyRound, Lock, LogOut, Menu, ShieldCheck, X } from "lucide-react";
+import { Bell, ChevronDown, Grid2x2, KeyRound, Lock, LogOut, Menu, ShieldCheck, Smartphone, X } from "lucide-react";
 import type { ProductTheme } from "@/config/catalog";
 import type { NavItem, NavSection } from "@/config/nav";
 import { fmtDateTime } from "@/lib/dates";
@@ -53,6 +53,7 @@ export function UserMenu({ name, sub, showPortal = true }: { name: string; sub: 
           {showPortal && <Link role="menuitem" href="/" className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-slate-700 hover:bg-slate-100"><Grid2x2 className="h-4 w-4" /> All applications</Link>}
           <Link role="menuitem" href="/change-password" className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-slate-700 hover:bg-slate-100"><KeyRound className="h-4 w-4" /> Change password</Link>
           <Link role="menuitem" href="/account/security" className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-slate-700 hover:bg-slate-100"><ShieldCheck className="h-4 w-4" /> Two-step verification</Link>
+          <Link role="menuitem" href="/download" className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-slate-700 hover:bg-slate-100"><Smartphone className="h-4 w-4" /> Get the app</Link>
           <button role="menuitem" onClick={signOut} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-red-700 hover:bg-red-50"><LogOut className="h-4 w-4" /> Sign out</button>
         </div>
       )}

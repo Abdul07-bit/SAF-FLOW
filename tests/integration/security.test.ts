@@ -383,7 +383,8 @@ describe("files", () => {
     expect(served.status).toBe(200);
     expect(served.headers.get("x-content-type-options")).toBe("nosniff");
     expectError(await api("GET", path.split("?")[0]), 404); // no signature
-    expectError(await api("GET", path.replace(/sig=./, "sig=Z")), 404); // tampered
+    // Tampered: always change the first signature character to a DIFFERENT one.
+    expectError(await api("GET", path.replace(/sig=(.)/, (_m, c: string) => `sig=${c === "A" ? "B" : "A"}`)), 404);
     expectError(await api("GET", path.replace(/exp=\d+/, "exp=1")), 404); // expired
     const logo = await api("POST", "/dine/business/logo", { cookie: biz.manager, body: imageForm(PNG_1PX) });
     expect(logo.status, JSON.stringify(logo.body)).toBe(200);
@@ -423,3 +424,31 @@ describe("not applicable in this codebase", () => {
 
 // Keep the shared client tidy for the run.
 void prisma;
+
+describe("hosting: Vercel cron and Android app links", () => {
+  it("renewal job accepts Vercel's Bearer secret (GET) and refuses anything else", async () => {
+    expectError(await api("GET", "/jobs/renewals", { headers: { authorization: "Bearer wrong-secret-value" } }), 401);
+    const ok = await api("GET", "/jobs/renewals", { headers: { authorization: `Bearer ${TEST_ENV.CRON_SECRET}` } });
+    expect(ok.status, JSON.stringify(ok.body)).toBe(200);
+  });
+
+  it("assetlinks.json is empty until configured, then names exactly the app and its signing key", async () => {
+    const prev = { p: process.env.ANDROID_PACKAGE_NAME, c: process.env.ANDROID_CERT_SHA256 };
+    try {
+      delete process.env.ANDROID_PACKAGE_NAME;
+      delete process.env.ANDROID_CERT_SHA256;
+      expect((await api("GET", "/well-known/assetlinks")).body).toEqual([]);
+      const fp = Array.from({ length: 32 }, (_, i) => i.toString(16).padStart(2, "0").toUpperCase()).join(":");
+      process.env.ANDROID_PACKAGE_NAME = "com.smartautoflex.safflow";
+      process.env.ANDROID_CERT_SHA256 = `${fp}, not-a-fingerprint`;
+      const r = await api("GET", "/well-known/assetlinks");
+      expect(r.body).toEqual([{
+        relation: ["delegate_permission/common.handle_all_urls"],
+        target: { namespace: "android_app", package_name: "com.smartautoflex.safflow", sha256_cert_fingerprints: [fp] },
+      }]);
+    } finally {
+      if (prev.p === undefined) delete process.env.ANDROID_PACKAGE_NAME; else process.env.ANDROID_PACKAGE_NAME = prev.p;
+      if (prev.c === undefined) delete process.env.ANDROID_CERT_SHA256; else process.env.ANDROID_CERT_SHA256 = prev.c;
+    }
+  });
+});

@@ -221,7 +221,11 @@ const DENIAL_CODES = new Set(["STEP_UP_REQUIRED", "MFA_REQUIRED", "MFA_ENROLLMEN
 
 export async function handleRequest(req: Request): Promise<Response> {
   const url = new URL(req.url);
-  const path = url.pathname.replace(/^\/api(?=\/|$)/, "") || "/";
+  // /.well-known/assetlinks.json reaches here through a Next.js rewrite, which
+  // keeps the original URL: map that one public address onto its API route.
+  const path = url.pathname === "/.well-known/assetlinks.json"
+    ? "/well-known/assetlinks"
+    : url.pathname.replace(/^\/api(?=\/|$)/, "") || "/";
   const method = req.method.toUpperCase();
   const headers = new Headers();
   const ip = clientIp(req);

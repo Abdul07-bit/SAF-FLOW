@@ -51,7 +51,21 @@ const nextConfig: NextConfig = {
   productionBrowserSourceMaps: false,
   serverExternalPackages: ["@node-rs/argon2", "@prisma/client", "pdf-lib", "qrcode"],
   async headers() {
-    return [{ source: "/:path*", headers: securityHeaders }];
+    return [
+      { source: "/:path*", headers: securityHeaders },
+      // The Android app download: correct type, always downloaded, short cache so new versions show up.
+      {
+        source: "/downloads/:file*.apk",
+        headers: [
+          { key: "Content-Type", value: "application/vnd.android.package-archive" },
+          { key: "Content-Disposition", value: "attachment" },
+          { key: "Cache-Control", value: "public, max-age=300" },
+        ],
+      },
+    ];
+  },
+  async rewrites() {
+    return [{ source: "/.well-known/assetlinks.json", destination: "/api/well-known/assetlinks" }];
   },
 };
 
