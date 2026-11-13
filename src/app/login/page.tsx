@@ -20,7 +20,11 @@ export default function LoginPage() {
     setBusy(true);
     setError(null);
     try {
-      const res = await api<{ redirect: string; mustChangePassword: boolean }>("/auth/login", { body: { username, password }, noRedirect: true });
+      const res = await api<{ redirect: string; mustChangePassword: boolean; mfaRequired?: boolean }>("/auth/login", { body: { username, password }, noRedirect: true });
+      if (res.mfaRequired) {
+        window.location.href = "/mfa";
+        return;
+      }
       const next = new URLSearchParams(window.location.search).get("next");
       // Only follow same-site relative paths.
       const safeNext = next && /^\/(?!\/)[\w\-/[\].]*$/.test(next) ? next : null;

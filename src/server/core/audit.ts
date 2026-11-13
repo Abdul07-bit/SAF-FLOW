@@ -13,7 +13,8 @@ export interface AuditEntry {
   meta?: Record<string, unknown>;
 }
 
-const SECRET_KEYS = /pass(word)?|secret|token|signature/i;
+// Never stored in the audit trail: credentials, OTP / recovery codes, cookies, keys.
+const SECRET_KEYS = /pass(word)?|secret|token|signature|otp|totp|mfa_?code|recovery_?code|cookie|authorization|api_?key|private_?key|cvv|card_?number/i;
 
 function scrub(v: unknown, depth = 0): unknown {
   if (depth > 4 || v === null || typeof v !== "object") return v;

@@ -15,7 +15,7 @@ import { fileUrl, saveImage } from "../core/storage";
 import { markInvoicePaid } from "../core/subscriptions";
 import { businessProfileSchema } from "../core/tenancy";
 import { writeAudit } from "../core/audit";
-import { cashfreeMode, cashfreePhone, createCashfreeOrder, fetchCashfreePayment, isCashfreeConfigured, newOrderId, verifyCashfreeWebhook } from "../payments/cashfree";
+import { cashfreeMode, cashfreePhone, createCashfreeOrder, fetchCashfreePayment, isCashfreeConfigured, newOrderId, verifyCashfreeWebhook, webhookTimestampFresh } from "../payments/cashfree";
 import { branches } from "@/shared/resources";
 
 // ---------------------------------------------------------------------------
@@ -88,7 +88,16 @@ async function loadMember(ctx: Ctx) {
   const u = await ctx.db.user.findFirst({ where: { id: ctx.params.userId, tenantId: ctx.tenantId } });
   if (!u) throw notFound("Staff member");
   if (u.isTenantOwner && !ctx.user.isTenantOwner) throw forbidden("PERMISSION_DENIED", "Only the business owner can change the owner account.");
+  // Managers cannot act on other manager accounts (reset their password, disable
+  // them, change their roles): that would let one manager take over another.
+  if (!ctx.user.isTenantOwner && u.id !== ctx.user.id && (await isManagerAccount(ctx.db, u.id)))
+    throw forbidden("PERMISSION_DENIED", "Only the business owner can change another manager's account.");
   return u;
+}
+
+/** True when the user holds the manager role in any SAF product of this business. */
+async function isManagerAccount(db: Tx, userId: string): Promise<boolean> {
+  return (await db.userProductAccess.count({ where: { userId, isActive: true, role: { code: "manager" } } })) > 0;
 }
 
 route({
@@ -125,7 +134,7 @@ route({
 });
 
 route({
-  method: "POST", path: "/:product/team", tag: "team", summary: "Create an employee login ID with product roles", auth: TEAM,
+  method: "POST", path: "/:product/team", tag: "team", summary: "Create an employee login ID with product roles", auth: TEAM, stepUp: true,
   body: z.object({
     fullName: z.string().trim().min(2).max(100),
     /** "login_id": CODE@handle with a temporary password. "email": email invitation, they set their own password. */
@@ -176,7 +185,7 @@ route({
 });
 
 route({
-  method: "PATCH", path: "/:product/team/:userId", tag: "team", summary: "Edit a staff member and change product roles", auth: TEAM,
+  method: "PATCH", path: "/:product/team/:userId", tag: "team", summary: "Edit a staff member and change product roles", auth: TEAM, stepUp: true,
   body: z.object({
     fullName: z.string().trim().min(2).max(100).optional(),
     phone: z.string().trim().max(20).nullable().optional(),
@@ -187,6 +196,10 @@ route({
   handler: async (ctx) => {
     const u = await loadMember(ctx);
     const { access, branchIds, ...profile } = ctx.body;
+    // The email of an email-sign-in account is its identity: it is changed by the
+    // account holder through the identity provider, never from the team screen.
+    if (profile.email !== undefined && u.authUserId && (profile.email ?? "").toLowerCase() !== (u.email ?? "").toLowerCase())
+      throw badRequest("The email of an email sign-in account cannot be changed here.");
     if (branchIds) {
       if (u.id === ctx.user.id) throw badRequest("You cannot change your own branch access.");
       if (u.isTenantOwner) throw badRequest("The business owner always has access to every branch.");
@@ -203,7 +216,7 @@ route({
 });
 
 route({
-  method: "POST", path: "/:product/team/:userId/reset-password", tag: "team", summary: "Reset a staff password (issues a temporary password)", auth: TEAM,
+  method: "POST", path: "/:product/team/:userId/reset-password", tag: "team", summary: "Reset a staff password (issues a temporary password)", auth: TEAM, stepUp: true,
   handler: async (ctx) => {
     const u = await loadMember(ctx);
     if (u.authUserId) {
@@ -235,7 +248,7 @@ route({
 });
 
 route({
-  method: "POST", path: "/:product/team/:userId/status", tag: "team", summary: "Enable or disable a staff account", auth: TEAM,
+  method: "POST", path: "/:product/team/:userId/status", tag: "team", summary: "Enable or disable a staff account", auth: TEAM, stepUp: true,
   body: z.object({ isActive: z.boolean() }),
   handler: async (ctx) => {
     const u = await loadMember(ctx);
@@ -243,6 +256,20 @@ route({
     await ctx.db.user.update({ where: { id: u.id }, data: { isActive: ctx.body.isActive } });
     if (!ctx.body.isActive) await revokeUserSessions(ctx.db, u.id);
     await ctx.audit(ctx.body.isActive ? "team.user.enable" : "team.user.disable", { type: "user", id: u.id });
+    return { ok: true };
+  },
+});
+
+route({
+  method: "POST", path: "/:product/team/:userId/mfa-reset", tag: "team",
+  summary: "Owner only: reset a staff member's two-step verification (lost phone)", auth: TEAM, stepUp: true,
+  handler: async (ctx) => {
+    if (!ctx.user.isTenantOwner) throw forbidden("PERMISSION_DENIED", "Only the business owner can reset two-step verification.");
+    const u = await loadMember(ctx);
+    if (u.id === ctx.user.id) throw badRequest("You cannot reset your own two-step verification. Use a recovery code or contact SAF support.");
+    await ctx.db.user.update({ where: { id: u.id }, data: { mfaEnabledAt: null, mfaSecretEnc: null, mfaLastStep: null, mfaRecoveryHashes: [] } });
+    await revokeUserSessions(ctx.db, u.id);
+    await ctx.audit("team.user.mfa_reset", { type: "user", id: u.id });
     return { ok: true };
   },
 });
@@ -264,7 +291,7 @@ registerCrud(branches, {
 
 route({
   method: "PUT", path: "/:product/settings", tag: "settings", summary: "Update product-specific settings",
-  auth: { product: ":product", permission: "settings.manage" },
+  auth: { product: ":product", permission: "settings.manage" }, stepUp: true,
   body: z.record(z.string(), z.unknown()),
   handler: async (ctx) => {
     const allowed = Object.keys(productSettingsSchemas[ctx.product].shape);
@@ -275,7 +302,7 @@ route({
 
 route({
   method: "PUT", path: "/:product/business", tag: "settings", summary: "Edit the business profile (owner only)",
-  auth: { product: ":product", permission: "settings.manage" },
+  auth: { product: ":product", permission: "settings.manage" }, stepUp: true,
   body: businessProfileSchema.omit({ category: true }).partial(),
   handler: async (ctx) => {
     if (!ctx.user.isTenantOwner) throw forbidden("PERMISSION_DENIED", "Only the business owner can edit the business profile.");
@@ -412,20 +439,28 @@ route({
  * Shared by the checkout confirmation and the webhook. Idempotent per gateway
  * order; refuses to settle when the gateway amount differs from the order.
  */
-async function settleGatewayOrder(db: Tx, orderId: string, paymentId: string, amountPaise: number) {
+export async function settleGatewayOrder(db: Tx, orderId: string, paymentId: string, amountPaise: number) {
   const pending = await db.payment.findUnique({ where: { gatewayOrderId: orderId }, include: { invoice: true } });
   if (!pending) throw notFound("Payment");
-  if (pending.status === "SUCCEEDED") return pending;
+  if (pending.status === "SUCCEEDED") return { payment: pending, settledNow: false };
   if (amountPaise !== pending.amount) {
     console.error("[cashfree] amount mismatch", { orderId, expected: pending.amount, got: amountPaise });
+    await writeAudit(db, { tenantId: pending.tenantId, action: "billing.payment_amount_mismatch", entityType: "payment", entityId: pending.id, meta: { orderId, expected: pending.amount, got: amountPaise } });
     throw conflict("The paid amount does not match this order. SAF support has been notified.");
   }
-  const p = await db.payment.update({ where: { id: pending.id }, data: { status: "SUCCEEDED", gatewayPaymentId: paymentId, paidAt: new Date(), reference: paymentId } });
+  // Compare-and-set: the browser confirmation and the webhook can arrive at the
+  // same moment; only one of them may move PENDING -> SUCCEEDED and settle the invoice.
+  const won = await db.payment.updateMany({
+    where: { id: pending.id, status: { not: "SUCCEEDED" } },
+    data: { status: "SUCCEEDED", gatewayPaymentId: paymentId, paidAt: new Date(), reference: paymentId },
+  });
+  const p = await db.payment.findUniqueOrThrow({ where: { id: pending.id } });
+  if (won.count === 0) return { payment: p, settledNow: false };
   if (pending.invoice && pending.invoice.status === "ISSUED") {
     const paid = await db.payment.aggregate({ where: { invoiceId: pending.invoice.id, status: "SUCCEEDED" }, _sum: { amount: true } });
     if ((paid._sum.amount ?? 0) >= pending.invoice.total) await markInvoicePaid(db, pending.invoice, null);
   }
-  return p;
+  return { payment: p, settledNow: true };
 }
 
 route({
@@ -439,8 +474,8 @@ route({
     if (pending.status === "SUCCEEDED") return { status: "PAID" };
     const r = await fetchCashfreePayment(ctx.body.orderId);
     if (!("cfPaymentId" in r)) return { status: r.status };
-    const p = await settleGatewayOrder(ctx.db, ctx.body.orderId, r.cfPaymentId, r.amountPaise);
-    await ctx.audit("billing.online_payment", { type: "payment", id: p.id }, { orderId: ctx.body.orderId, gateway: "cashfree" });
+    const { payment: p, settledNow } = await settleGatewayOrder(ctx.db, ctx.body.orderId, r.cfPaymentId, r.amountPaise);
+    if (settledNow) await ctx.audit("billing.online_payment", { type: "payment", id: p.id }, { orderId: ctx.body.orderId, gateway: "cashfree" });
     return { status: "PAID" };
   },
 });
@@ -450,23 +485,37 @@ route({
   auth: { public: true }, rawBody: true, audit: false,
   handler: async (ctx) => {
     const raw = await ctx.req.text();
+    if (raw.length > 64 * 1024) throw new HttpError(413, "PAYLOAD_TOO_LARGE", "Webhook body too large.");
     const h = ctx.req.headers;
     if (!verifyCashfreeWebhook(raw, h.get("x-webhook-timestamp") || "", h.get("x-webhook-signature") || ""))
       throw new HttpError(400, "INVALID_SIGNATURE", "Invalid webhook signature.");
+    // Replay window: a captured, correctly signed webhook is only accepted for 5 minutes.
+    if (!webhookTimestampFresh(h.get("x-webhook-timestamp") || ""))
+      throw new HttpError(400, "STALE_WEBHOOK", "Webhook timestamp outside the accepted window.");
     const evt = JSON.parse(raw) as {
       type?: string;
       data?: { order?: { order_id?: string }; payment?: { cf_payment_id?: string | number; payment_status?: string; payment_amount?: number } };
     };
     const orderId = evt.data?.order?.order_id;
     const pay = evt.data?.payment;
-    if (evt.type === "PAYMENT_SUCCESS_WEBHOOK" && pay?.payment_status === "SUCCESS" && orderId && pay.cf_payment_id != null) {
-      await withPlatform(async (db) => {
-        const p = await settleGatewayOrder(db, orderId, String(pay.cf_payment_id), Math.round(Number(pay.payment_amount) * 100)).catch((e) => {
-          console.error("[cashfree] webhook not settled", orderId, e instanceof Error ? e.message : e);
-          return null;
-        });
-        if (p) await writeAudit(db, { tenantId: p.tenantId, action: "billing.webhook_payment", entityType: "payment", entityId: p.id, meta: { gateway: "cashfree" } });
+    if (evt.type === "PAYMENT_SUCCESS_WEBHOOK" && pay?.payment_status === "SUCCESS" && orderId && /^[A-Za-z0-9_-]{3,45}$/.test(orderId)) {
+      // The webhook only tells us WHICH order to look at. Status, amount and
+      // payment id are read back from Cashfree's API before anything is settled.
+      const known = await withPlatform((db) => db.payment.findUnique({ where: { gatewayOrderId: orderId }, select: { id: true } }));
+      if (!known) return { ok: true };
+      const r = await fetchCashfreePayment(orderId).catch((e) => {
+        console.error("[cashfree] webhook verification failed", orderId, e instanceof Error ? e.message : e);
+        return null;
       });
+      if (r && "cfPaymentId" in r) {
+        await withPlatform(async (db) => {
+          const s = await settleGatewayOrder(db, orderId, r.cfPaymentId, r.amountPaise).catch((e) => {
+            console.error("[cashfree] webhook not settled", orderId, e instanceof Error ? e.message : e);
+            return null;
+          });
+          if (s?.settledNow) await writeAudit(db, { tenantId: s.payment.tenantId, action: "billing.webhook_payment", entityType: "payment", entityId: s.payment.id, meta: { gateway: "cashfree", requestId: ctx.requestId } });
+        });
+      }
     }
     return { ok: true };
   },

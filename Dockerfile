@@ -20,8 +20,12 @@ RUN npm run build
 
 FROM node:22-bookworm-slim AS runner
 WORKDIR /app
+# The runtime only needs `node`: the bundled npm/corepack (and their dependency
+# trees and CVEs) are removed from the production image.
 RUN apt-get update && apt-get install -y --no-install-recommends openssl ca-certificates && rm -rf /var/lib/apt/lists/* \
-  && groupadd --system --gid 1001 saf && useradd --system --uid 1001 --gid saf saf
+  && groupadd --system --gid 1001 saf && useradd --system --uid 1001 --gid saf saf \
+  && rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack \
+            /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack
 ENV NODE_ENV=production NEXT_TELEMETRY_DISABLED=1 PORT=3000 HOSTNAME=0.0.0.0
 COPY --from=builder --chown=saf:saf /app/.next/standalone ./
 COPY --from=builder --chown=saf:saf /app/.next/static ./.next/static

@@ -2,6 +2,7 @@ import { mkdir, readFile, writeFile, unlink } from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { badRequest } from "../http/errors";
+import { signFileUrl } from "./keys";
 
 /**
  * File storage abstraction. STORAGE_DRIVER=local writes under ./storage;
@@ -107,6 +108,27 @@ export async function saveImage(tenantId: string, folder: string, file: File | n
   return key;
 }
 
+/**
+ * Folders whose files are personal data (employee photos). Their URLs carry a
+ * short-lived HMAC signature; without it /api/files refuses to serve them.
+ * Business logos stay public: they appear on QR menus and customer invoices.
+ */
+export const PRIVATE_FOLDERS = new Set(["employees"]);
+const PHOTO_URL_TTL_SEC = 3600;
+
+export function isPrivateKey(key: string): boolean {
+  return PRIVATE_FOLDERS.has(key.split("/")[2] ?? "");
+}
+
 export function fileUrl(key: string | null | undefined): string | null {
-  return key ? `/api/files/${key}` : null;
+  if (!key) return null;
+  if (!isPrivateKey(key)) return `/api/files/${key}`;
+  // Expiry rounded up to the hour so the browser can cache a photo for a while,
+  // while a leaked link stops working within two hours at most.
+  const exp = (Math.floor(Date.now() / 1000 / PHOTO_URL_TTL_SEC) + 2) * PHOTO_URL_TTL_SEC;
+  try {
+    return `/api/files/${key}?exp=${exp}&sig=${signFileUrl(key, exp)}`;
+  } catch {
+    return null; // signing key unavailable (production without SAF_APP_SECRET): fail closed
+  }
 }

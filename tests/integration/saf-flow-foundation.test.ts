@@ -45,7 +45,7 @@ describe("email identity and invitations", () => {
     expect(inv.status, JSON.stringify(inv.body)).toBe(201);
     expect(inv.body.delivery).toBe("email");
 
-    expectError(await api("POST", "/auth/login", { body: { username: mail, password: "anything1" } }), 403, "INVITATION_PENDING");
+    expectError(await api("POST", "/auth/login", { body: { username: mail, password: "anything1" } }), 401, "INVALID_CREDENTIALS");
 
     const token = idp.lastToken(mail);
     const look = await api("POST", "/auth/link/inspect", { body: { accessToken: token } });

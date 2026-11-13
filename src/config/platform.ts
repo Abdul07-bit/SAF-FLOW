@@ -49,6 +49,9 @@ export const PLATFORM_PERMISSIONS = [
 
   { key: "platform.audit.read", area: "Audit", description: "View audit logs" },
 
+  { key: "platform.security.read", area: "Security", description: "View the Security Center: alerts, sign-in activity, sessions, MFA coverage" },
+  { key: "platform.security.manage", area: "Security", description: "Revoke sessions, reset MFA and unlock accounts during security incidents" },
+
   { key: "platform.settings.read", area: "Settings", description: "View global settings and integration status" },
   { key: "platform.settings.manage", area: "Settings", description: "Change global settings" },
   { key: "platform.jobs.run", area: "Settings", description: "Run scheduled jobs manually" },
@@ -128,6 +131,14 @@ export const PLATFORM_ROLES: PlatformRoleDef[] = [
       "platform.dashboard.read", "platform.business.read", "platform.business.create", "platform.business.update",
       "platform.catalog.read", "platform.entitlements.manage", "platform.subscription.read", "platform.users.read",
       "platform.users.manage",
+    ],
+  },
+  {
+    code: "SECURITY_ADMIN", name: "Security Administrator", isSystem: true, allTenants: true,
+    description: "Monitors platform security, investigates incidents, revokes sessions and resets MFA. No billing or catalog changes.",
+    permissions: [
+      "platform.dashboard.read", "platform.business.read", "platform.users.read", "platform.staff.read",
+      "platform.audit.read", "platform.settings.read", "platform.security.read", "platform.security.manage",
     ],
   },
   {

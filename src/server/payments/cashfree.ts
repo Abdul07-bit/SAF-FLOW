@@ -107,6 +107,8 @@ export async function fetchCashfreePayment(orderId: string): Promise<
   const order = await call(`/orders/${encodeURIComponent(orderId)}`, { method: "GET" });
   const status = String(order?.order_status ?? "UNKNOWN");
   if (status !== "PAID") return { status };
+  // SAF only ever creates INR orders; anything else is not ours to settle.
+  if (String(order?.order_currency ?? "INR") !== "INR") return { status: "CURRENCY_MISMATCH" };
   const payments = await call(`/orders/${encodeURIComponent(orderId)}/payments`, { method: "GET" });
   const ok = (Array.isArray(payments) ? payments : []).find((p: any) => p?.payment_status === "SUCCESS");
   if (!ok) return { status: "PENDING" };
@@ -117,6 +119,14 @@ export async function fetchCashfreePayment(orderId: string): Promise<
  * Webhook signature: base64(HMAC_SHA256(x-webhook-timestamp + raw body, client secret)).
  * Must be computed over the raw bytes; re-serialised JSON changes "170.00" to 170.
  */
+/** Cashfree sends x-webhook-timestamp in milliseconds. Accept +/- 5 minutes. */
+export function webhookTimestampFresh(ts: string, now = Date.now(), windowMs = 5 * 60_000): boolean {
+  const n = Number(ts);
+  if (!Number.isFinite(n) || n <= 0) return false;
+  const ms = n < 1e12 ? n * 1000 : n; // tolerate seconds
+  return Math.abs(now - ms) <= windowMs;
+}
+
 export function verifyCashfreeWebhook(rawBody: string, timestamp: string, signature: string, secret = process.env.CASHFREE_CLIENT_SECRET || ""): boolean {
   if (!secret || !signature || !timestamp) return false;
   const expected = Buffer.from(createHmac("sha256", secret).update(timestamp + rawBody).digest("base64"), "utf8");

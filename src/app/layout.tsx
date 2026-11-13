@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import { Toaster } from "@/components/ui";
 import { PwaRegister } from "@/components/pwa";
+import { StepUpPrompt } from "@/components/step-up";
 
 export const metadata: Metadata = {
   title: { default: "SAF Flow", template: "%s | SAF Flow" },
@@ -20,6 +21,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body>
         {children}
         <Toaster />
+        <StepUpPrompt />
         <PwaRegister />
       </body>
     </html>

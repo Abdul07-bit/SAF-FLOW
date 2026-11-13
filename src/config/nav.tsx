@@ -41,6 +41,7 @@ const ACCOUNT: NavSection = {
   items: [
     { slug: "branches", label: "Branches", icon: Building2, feature: "multi_branch", permission: "settings.manage" },
     { slug: "settings", label: "Settings", icon: Settings, permission: "settings.manage" },
+    { slug: "security", label: "Security Center", icon: ShieldCheck, permission: "staff.manage" },
     { slug: "subscription", label: "Subscription", icon: CreditCard, permission: "subscription.view" },
     { slug: "support", label: "Support", icon: LifeBuoy, permission: "support.use" },
   ],
@@ -199,6 +200,7 @@ export const ADMIN_NAV: NavSection[] = [
     title: "Operations",
     items: [
       { slug: "support", label: "Support center", icon: LifeBuoy, platform: "platform.support.read" },
+      { slug: "security", label: "Security Center", icon: ShieldCheck, platform: "platform.security.read" },
       { slug: "audit", label: "Audit logs", icon: ScrollText, platform: "platform.audit.read" },
       { slug: "system", label: "System health", icon: Gauge, platform: "platform.settings.read" },
       { slug: "settings", label: "Settings", icon: Settings, platform: "platform.settings.read" },

@@ -1,0 +1,14 @@
+# Gitleaks configuration: the default rules, plus ONE documented exception.
+# Reviewed 2026-11-13 (SECURITY_TEST_REPORT.md > Secret scanning).
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Reviewed test fixtures"
+# tests/env.ts holds fixed, non-secret values (CRON_SECRET, a fake Cashfree
+# key, dev DB passwords) for the throwaway local test database and the CI
+# Postgres service. They are never used by any real deployment, and
+# scripts/security-preflight.mjs refuses short / dev-looking secrets in
+# production. Any OTHER file with a credential still fails the scan.
+paths = ['''^tests/env\.ts$''']

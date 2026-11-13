@@ -9,6 +9,7 @@ import { AdminBusinessDetail, AdminBusinesses, AdminNewBusiness, AdminOverview }
 import { AdminFeatures, AdminInvoice, AdminPayments, AdminPlans, AdminProducts, AdminRevenue, AdminSubscriptions } from "@/screens/admin-commercial";
 import { AdminAudit, AdminEmployees, AdminManagers, AdminSettings, AdminSupport, AdminSystemHealth } from "@/screens/admin-ops";
 import { AdminRoles, AdminTeam, AdminTeamMember } from "@/screens/admin-team";
+import { AdminSecurity } from "@/screens/security-center";
 import { Shell, UserMenu, themeVars } from "./shell";
 import { Card, Empty, Spinner } from "./ui";
 
@@ -27,7 +28,7 @@ function screenFor(path: string[]): { node: ReactNode; active: string } | null {
   const simple: Record<string, ReactNode> = {
     products: <AdminProducts />, subscriptions: <AdminSubscriptions />, plans: <AdminPlans />, features: <AdminFeatures />, payments: <AdminPayments />,
     revenue: <AdminRevenue />, managers: <AdminManagers />, employees: <AdminEmployees />, support: <AdminSupport />, audit: <AdminAudit />,
-    settings: <AdminSettings />, roles: <AdminRoles />, system: <AdminSystemHealth />,
+    settings: <AdminSettings />, roles: <AdminRoles />, system: <AdminSystemHealth />, security: <AdminSecurity />,
   };
   return a in simple ? { node: simple[a], active: a } : null;
 }

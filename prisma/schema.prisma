@@ -563,6 +563,14 @@ model User {
   lockedUntil        DateTime? @map("locked_until")
   lastLoginAt        DateTime? @map("last_login_at")
   passwordChangedAt  DateTime? @map("password_changed_at")
+  /// TOTP secret, AES-256-GCM encrypted with a key derived from SAF_APP_SECRET.
+  mfaSecretEnc       String?   @map("mfa_secret_enc")
+  /// Set when TOTP enrolment was confirmed; NULL = MFA off.
+  mfaEnabledAt       DateTime? @map("mfa_enabled_at")
+  /// SHA-256 hashes of unused one-time recovery codes.
+  mfaRecoveryHashes  String[]  @default([]) @map("mfa_recovery_hashes")
+  /// Last accepted TOTP time step (replay protection).
+  mfaLastStep        BigInt?   @map("mfa_last_step")
   createdAt          DateTime  @default(now()) @map("created_at")
   updatedAt          DateTime  @updatedAt @map("updated_at")
 
@@ -654,6 +662,12 @@ model Session {
   lastSeenAt DateTime  @default(now()) @map("last_seen_at")
   expiresAt  DateTime  @map("expires_at")
   revokedAt  DateTime? @map("revoked_at")
+  /// Password accepted, second factor still required: only /auth/mfa/* works.
+  mfaPending    Boolean   @default(false) @map("mfa_pending")
+  mfaFailures   Int       @default(0) @map("mfa_failures")
+  mfaVerifiedAt DateTime? @map("mfa_verified_at")
+  /// Last re-authentication for sensitive actions (step-up).
+  stepUpAt      DateTime? @map("step_up_at")
 
   user   User    @relation(fields: [userId], references: [id], onDelete: Cascade)
   tenant Tenant? @relation(fields: [tenantId], references: [id], onDelete: Cascade)

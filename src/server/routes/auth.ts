@@ -13,6 +13,7 @@ import { writeAudit } from "../core/audit";
 import { loadPortal, loadProductAccess, type ProductAccess } from "../core/access";
 import { getProductSettings } from "../core/settings";
 import { fileUrl } from "../core/storage";
+import { mfaRequiredFor } from "../auth/mfa";
 
 const loginBody = z.object({
   username: z.string().trim().min(3).max(200),
@@ -20,10 +21,13 @@ const loginBody = z.object({
 });
 
 type LoginOutcome =
-  | { ok: true; token: string; expiresAt: Date; user: { id: string; username: string; fullName: string; kind: string; mustChangePassword: boolean } }
+  | { ok: true; token: string; expiresAt: Date; mfaPending: boolean; user: { id: string; username: string; fullName: string; kind: string; mustChangePassword: boolean } }
   | { ok: false; error: HttpError };
 
-const invalid = () => new HttpError(401, "INVALID_CREDENTIALS", "Incorrect email / login ID or password.");
+// One answer for unknown accounts, wrong passwords, locked accounts and pending
+// invitations, so the sign-in form cannot be used to discover accounts.
+const invalid = () =>
+  new HttpError(401, "INVALID_CREDENTIALS", "Incorrect email / login ID or password. After repeated failures an account is locked for a few minutes.");
 
 // ---------------------------------------------------------------------------
 // Sign-in
@@ -77,11 +81,14 @@ route({
     }
     const now = new Date();
     if (user.lockedUntil && user.lockedUntil > now) {
-      const mins = Math.ceil((user.lockedUntil.getTime() - now.getTime()) / 60_000);
-      throw new HttpError(423, "ACCOUNT_LOCKED", `Account locked after repeated failed attempts. Try again in ${mins} minute(s).`);
+      await burnPasswordCheck(ctx.body.password);
+      await withPlatform((db) => writeAudit(db, { tenantId: user.tenantId, actor: user, action: "auth.login_blocked_locked", ...meta }));
+      throw invalid();
     }
-    if (user.authUserId && user.invitations.length && !user.isActive)
-      throw new HttpError(403, "INVITATION_PENDING", "Please open the invitation email and set your password first.");
+    if (user.authUserId && user.invitations.length && !user.isActive) {
+      await burnPasswordCheck(ctx.body.password);
+      throw invalid();
+    }
 
     // 2. Verify the credential (outside any transaction: may call Supabase).
     let ok = false;
@@ -116,11 +123,20 @@ route({
         await writeAudit(db, { tenantId: user.tenantId, actor: user, action: "auth.login_disabled", ...meta });
         return { ok: false, error: new HttpError(403, "ACCOUNT_DISABLED", "This account has been disabled. Contact your administrator.") };
       }
-      const session = await createSession(db, user.id, user.tenantId, meta);
-      await db.user.update({ where: { id: user.id }, data: { failedLoginCount: 0, lockedUntil: null, lastLoginAt: now } });
-      await writeAudit(db, { tenantId: user.tenantId, actor: user, action: "auth.login", ...meta, meta: { method: user.authUserId ? "email" : "login_id" } });
+      // With MFA on, the password only opens a short "MFA pending" session that
+      // can do nothing but POST /auth/mfa/verify.
+      const mfaPending = !!user.mfaEnabledAt;
+      const session = await createSession(db, user.id, user.tenantId, meta, { mfaPending });
+      await db.user.update({ where: { id: user.id }, data: { failedLoginCount: 0, lockedUntil: null, ...(mfaPending ? {} : { lastLoginAt: now }) } });
+      const knownDevice = await db.session.count({
+        where: { userId: user.id, id: { not: session.id }, userAgent: meta.userAgent?.slice(0, 300) ?? null, createdAt: { gt: new Date(now.getTime() - 90 * 86_400_000) } },
+      });
+      await writeAudit(db, {
+        tenantId: user.tenantId, actor: user, action: mfaPending ? "auth.login_password_ok_mfa_pending" : "auth.login", ...meta,
+        meta: { method: user.authUserId ? "email" : "login_id", newDevice: knownDevice === 0 },
+      });
       return {
-        ok: true, token: session.token, expiresAt: session.expiresAt,
+        ok: true, token: session.token, expiresAt: session.expiresAt, mfaPending,
         user: { id: user.id, username: user.username, fullName: user.fullName, kind: user.kind, mustChangePassword: user.mustChangePassword },
       };
     });
@@ -128,6 +144,7 @@ route({
     if (!outcome.ok) throw outcome.error;
     ctx.headers.append("set-cookie", sessionCookie(outcome.token, Math.floor((outcome.expiresAt.getTime() - Date.now()) / 1000)));
     const u = outcome.user;
+    if (outcome.mfaPending) return { mfaRequired: true, redirect: "/mfa" };
     return {
       user: u,
       mustChangePassword: u.mustChangePassword,
@@ -138,7 +155,7 @@ route({
 
 route({
   method: "POST", path: "/auth/logout", tag: "auth", summary: "Sign out (revokes the session)",
-  auth: { session: true, allowPasswordChange: true },
+  auth: { session: true, allowPasswordChange: true, allowMfaEnrollment: true, allowMfaPending: true },
   handler: async (ctx) => {
     await withPlatform(async (db) => {
       await revokeSession(db, ctx.session!.id);
@@ -151,7 +168,7 @@ route({
 
 route({
   method: "POST", path: "/auth/logout-all", tag: "auth", summary: "Sign out of every device (revokes all sessions)",
-  auth: { session: true, allowPasswordChange: true },
+  auth: { session: true, allowPasswordChange: true, allowMfaEnrollment: true },
   handler: async (ctx) => {
     await withPlatform(async (db) => {
       await revokeUserSessions(db, ctx.user.id);
@@ -165,7 +182,7 @@ route({
 route({
   method: "POST", path: "/auth/change-password", tag: "auth",
   summary: "Change own password (required after first login with a temporary password)",
-  auth: { session: true, allowPasswordChange: true },
+  auth: { session: true, allowPasswordChange: true, allowMfaEnrollment: true },
   body: z.object({ currentPassword: z.string().min(1).max(200), newPassword: z.string().min(1).max(200) }),
   rateLimit: { limit: 10, windowMs: 60_000 },
   handler: async (ctx) => {
@@ -301,9 +318,11 @@ route({
         tenantId: user.tenantId, actor: user, ...meta,
         action: purpose === "invite" ? "auth.invitation_accepted" : "auth.password_reset_completed",
       });
-      return createSession(db, user.id, user.tenantId, meta);
+      // A reset link proves control of the mailbox, not the second factor.
+      return createSession(db, user.id, user.tenantId, meta, { mfaPending: !!user.mfaEnabledAt });
     });
     ctx.headers.append("set-cookie", sessionCookie(session.token, Math.floor((session.expiresAt.getTime() - Date.now()) / 1000)));
+    if (user.mfaEnabledAt) return { ok: true, purpose, mfaRequired: true, redirect: "/mfa" };
     return { ok: true, purpose, redirect: user.kind === "PLATFORM" ? "/admin" : "/" };
   },
 });
@@ -327,6 +346,7 @@ export async function meData(user: SessionUser) {
     user: {
       id: user.id, username: user.username, fullName: user.fullName, kind: user.kind,
       isTenantOwner: user.isTenantOwner, mustChangePassword: user.mustChangePassword,
+      mfaEnabled: user.mfaEnabled, mfaRequired: mfaRequiredFor(user),
     },
   };
   if (user.kind === "PLATFORM" || !user.tenantId) return { ...base, tenant: null, products: null };
@@ -339,7 +359,7 @@ export async function meData(user: SessionUser) {
 
 route({
   method: "GET", path: "/me", tag: "auth", summary: "Current user, business and subscribed SAF products",
-  auth: { session: true, allowPasswordChange: true },
+  auth: { session: true, allowPasswordChange: true, allowMfaEnrollment: true },
   handler: (ctx) => meData(ctx.user),
 });
 

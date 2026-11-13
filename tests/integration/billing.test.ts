@@ -128,7 +128,7 @@ describe("subscriptions & billing", () => {
     expect(pays.body.items[0].reference).toBe("5550001");
   });
 
-  it("webhook: rejects bad signatures, settles on PAYMENT_SUCCESS_WEBHOOK", async () => {
+  it("webhook: signature + freshness checked, gateway re-verified, settles exactly once (even racing the browser)", async () => {
     const biz = await createBusiness([{ productCode: "dine", tier: "BASIC" }]);
     const inv = (await api("GET", `/admin/invoices?tenantId=${biz.tenantId}&status=ISSUED`, { cookie: biz.admin })).body.items.find((i: any) => i.kind === "SETUP");
     const orderId = `wh-${biz.code}`;
@@ -138,16 +138,55 @@ describe("subscriptions & billing", () => {
     // Amounts as Cashfree sends them (rupees, two decimals): the signature covers these exact bytes.
     const amt = (inv.total / 100).toFixed(2);
     const raw = `{"data":{"order":{"order_id":"${orderId}","order_amount":${amt}},"payment":{"cf_payment_id":7770001,"payment_status":"SUCCESS","payment_amount":${amt}}},"event_time":"2026-11-13T10:00:00+05:30","type":"PAYMENT_SUCCESS_WEBHOOK"}`;
-    const ts = String(Date.now());
-    const post = (sig: string) =>
+    const post = (sig: string, ts = String(Date.now())) =>
       handleRequest(new Request("http://localhost:3000/api/webhooks/cashfree", {
         method: "POST", body: raw, headers: { "content-type": "application/json", "x-webhook-timestamp": ts, "x-webhook-signature": sig },
       }));
-    expect((await post("deadbeef")).status).toBe(400);
-    const good = createHmac("sha256", TEST_ENV.CASHFREE_CLIENT_SECRET).update(ts + raw).digest("base64");
-    expect((await post(good)).status).toBe(200);
-    expect((await post(good)).status).toBe(200); // retries are harmless
+    const sign = (ts: string) => createHmac("sha256", TEST_ENV.CASHFREE_CLIENT_SECRET).update(ts + raw).digest("base64");
+
+    // Fake Cashfree API: the webhook body is never trusted on its own.
+    let gatewayStatus = "ACTIVE";
+    const realFetch = globalThis.fetch;
+    const spy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input: any, init?: any) => {
+      const url = String(input);
+      if (!url.startsWith("https://sandbox.cashfree.com/pg/")) return realFetch(input, init);
+      const json = (b: unknown) => new Response(JSON.stringify(b), { status: 200, headers: { "content-type": "application/json" } });
+      if (url.endsWith("/payments")) return json([{ cf_payment_id: 7770001, payment_status: "SUCCESS", payment_amount: Number(amt) }]);
+      return json({ order_status: gatewayStatus, order_currency: "INR" });
+    });
+    try {
+      expect((await post("deadbeef")).status).toBe(400);
+      // Correctly signed but replayed long after it was sent.
+      const old = String(Date.now() - 60 * 60_000);
+      const stale = await post(sign(old), old);
+      expect(stale.status).toBe(400);
+      expect((await stale.json()).error.code).toBe("STALE_WEBHOOK");
+
+      // Signed and fresh, but Cashfree's own API says the order is not paid: nothing settles.
+      let ts = String(Date.now());
+      expect((await post(sign(ts), ts)).status).toBe(200);
+      expect((await api("GET", `/admin/invoices/${inv.id}`, { cookie: biz.admin })).body.invoice.status).toBe("ISSUED");
+
+      // Paid at the gateway: webhook and browser confirmation race; exactly one settles.
+      gatewayStatus = "PAID";
+      ts = String(Date.now());
+      const [w, c] = await Promise.all([
+        post(sign(ts), ts),
+        api("POST", "/dine/billing/cashfree/confirm", { cookie: biz.manager, body: { orderId } }),
+      ]);
+      expect(w.status).toBe(200);
+      expect(c.body.status, JSON.stringify(c.body)).toBe("PAID");
+      expect((await post(sign(ts), ts)).status).toBe(200); // retries are harmless
+    } finally {
+      spy.mockRestore();
+    }
     expect((await api("GET", `/admin/invoices/${inv.id}`, { cookie: biz.admin })).body.invoice.status).toBe("PAID");
+    const settled = await withTenant(biz.tenantId, (db) => db.auditLog.count({
+      where: { tenantId: biz.tenantId, action: { in: ["billing.webhook_payment", "billing.online_payment"] } },
+    }));
+    expect(settled).toBe(1);
+    const succeeded = await withTenant(biz.tenantId, (db) => db.payment.count({ where: { gatewayOrderId: orderId, status: "SUCCEEDED" } }));
+    expect(succeeded).toBe(1);
   });
 
   it("pricing is configured per product and never hardcoded", async () => {

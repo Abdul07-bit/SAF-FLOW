@@ -7,7 +7,8 @@ describe("authentication", () => {
     for (let i = 0; i < 4; i++) expectError(await api("POST", "/auth/login", { body: { username: biz.managerUsername, password: "wrong-pass-1" } }), 401, "INVALID_CREDENTIALS");
     expectError(await api("POST", "/auth/login", { body: { username: biz.managerUsername, password: "wrong-pass-1" } }), 401, "INVALID_CREDENTIALS");
     // 5th failure locked the account: even the right password is refused now
-    expectError(await api("POST", "/auth/login", { body: { username: biz.managerUsername, password: STRONG_PASSWORD } }), 423, "ACCOUNT_LOCKED");
+    // Locked accounts get the same answer as a wrong password (no account enumeration), even with the right password.
+    expectError(await api("POST", "/auth/login", { body: { username: biz.managerUsername, password: STRONG_PASSWORD } }), 401, "INVALID_CREDENTIALS");
     // Super Admin unlocks
     const admin = await adminLogin();
     const managers = await api("GET", `/admin/managers?q=${biz.code}`, { cookie: admin });

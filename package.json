@@ -17,7 +17,10 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "docs:api": "tsx scripts/gen-openapi.ts",
-    "jobs:renewals": "tsx scripts/run-renewals.ts"
+    "jobs:renewals": "tsx scripts/run-renewals.ts",
+    "security:migrations": "node scripts/check-migrations.mjs",
+    "security:preflight": "node scripts/security-preflight.mjs",
+    "test:security": "vitest run tests/unit/security.test.ts tests/integration/security.test.ts tests/integration/isolation.test.ts"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"
@@ -32,6 +35,7 @@
     "jpeg-js": "^0.4.4",
     "lucide-react": "0.577.0",
     "next": "15.5.29",
+    "otpauth": "9.6.0",
     "pdf-lib": "1.17.1",
     "pngjs": "^7.0.0",
     "qrcode": "1.5.4",
@@ -48,11 +52,12 @@
     "@types/react-dom": "19.2.2",
     "prisma": "6.19.3",
     "tailwindcss": "4.1.14",
-    "tsx": "4.20.6",
+    "tsx": "4.23.15",
     "typescript": "5.9.3",
-    "vitest": "3.2.4"
+    "vitest": "4.1.12"
   },
   "overrides": {
-    "postcss": "8.5.32"
+    "postcss": "8.5.32",
+    "deepmerge-ts": "8.0.2"
   }
 }

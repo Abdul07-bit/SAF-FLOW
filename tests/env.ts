@@ -14,4 +14,6 @@ export const TEST_ENV: Record<string, string> = {
   CASHFREE_ENV: "sandbox",
   LOGIN_MAX_FAILURES: "5",
   LOGIN_LOCK_MINUTES: "15",
+  // The cached admin session is reused across files; keep its fresh sign-in valid.
+  STEP_UP_WINDOW_MINUTES: "60",
 };

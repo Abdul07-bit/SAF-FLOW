@@ -18,11 +18,16 @@ export interface SessionUser {
   mustChangePassword: boolean;
   tenantCode: string | null;
   tenantStatus: TenantStatus | null;
+  mfaEnabled: boolean;
 }
 
 export interface AuthedSession {
   id: string;
   user: SessionUser;
+  /** Password accepted but the second factor is still outstanding. */
+  mfaPending: boolean;
+  /** Last fresh authentication (sign-in, MFA, or explicit re-authentication). */
+  stepUpAt: Date | null;
 }
 
 export async function createSession(
@@ -30,11 +35,18 @@ export async function createSession(
   userId: string,
   tenantId: string | null,
   meta: { ip?: string; userAgent?: string },
-): Promise<{ token: string; expiresAt: Date }> {
+  opts: { mfaPending?: boolean; mfaVerified?: boolean } = {},
+): Promise<{ token: string; expiresAt: Date; id: string }> {
   const raw = token(32);
-  const expiresAt = new Date(Date.now() + ttlHours() * 3600_000);
-  await db.session.create({
+  // A half-authenticated (MFA pending) session lives for 10 minutes at most.
+  const expiresAt = new Date(Date.now() + (opts.mfaPending ? 10 * 60_000 : ttlHours() * 3600_000));
+  const now = new Date();
+  const s = await db.session.create({
     data: {
+      mfaPending: !!opts.mfaPending,
+      mfaVerifiedAt: opts.mfaVerified ? now : null,
+      // Signing in is a fresh authentication; a pending session is not.
+      stepUpAt: opts.mfaPending ? null : now,
       tokenHash: sha256(raw),
       userId,
       tenantId,
@@ -43,7 +55,7 @@ export async function createSession(
       expiresAt,
     },
   });
-  return { token: raw, expiresAt };
+  return { token: raw, expiresAt, id: s.id };
 }
 
 /** Resolves a session token. Runs before the tenant is known, hence platform scope. */
@@ -59,8 +71,8 @@ export async function authenticate(raw: string | null | undefined): Promise<Auth
     if (now - s.createdAt.getTime() > ABSOLUTE_MAX_MS) return null;
     if (!s.user.isActive) return null;
 
-    // Sliding expiry, written at most once every 5 minutes.
-    if (now - s.lastSeenAt.getTime() > 5 * 60_000) {
+    // Sliding expiry, written at most once every 5 minutes (never for MFA-pending sessions).
+    if (!s.mfaPending && now - s.lastSeenAt.getTime() > 5 * 60_000) {
       await db.session.update({
         where: { id: s.id },
         data: { lastSeenAt: new Date(now), expiresAt: new Date(now + ttlHours() * 3600_000) },
@@ -69,6 +81,8 @@ export async function authenticate(raw: string | null | undefined): Promise<Auth
     const u = s.user;
     return {
       id: s.id,
+      mfaPending: s.mfaPending,
+      stepUpAt: s.stepUpAt,
       user: {
         id: u.id,
         tenantId: u.tenantId,
@@ -80,6 +94,7 @@ export async function authenticate(raw: string | null | undefined): Promise<Auth
         mustChangePassword: u.mustChangePassword,
         tenantCode: u.tenant?.code ?? null,
         tenantStatus: u.tenant?.status ?? null,
+        mfaEnabled: !!u.mfaEnabledAt,
       },
     };
   });

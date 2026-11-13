@@ -99,7 +99,7 @@ const roleBody = z.object({
 
 route({
   method: "POST", path: "/admin/platform-roles", tag: "saf-team", summary: "Create a custom platform role",
-  auth: { platform: "platform.staff.permissions.manage", elevated: true },
+  auth: { platform: "platform.staff.permissions.manage", elevated: true }, stepUp: true,
   body: roleBody.extend({ code: z.string().trim().toUpperCase().regex(/^[A-Z][A-Z0-9_]{2,39}$/, "Code: 3-40 letters, digits or _") }),
   handler: async (ctx) => {
     const b = ctx.body;
@@ -120,7 +120,7 @@ route({
 
 route({
   method: "PUT", path: "/admin/platform-roles/:code", tag: "saf-team", summary: "Edit a platform role's permissions and scope",
-  auth: { platform: "platform.staff.permissions.manage", elevated: true },
+  auth: { platform: "platform.staff.permissions.manage", elevated: true }, stepUp: true,
   body: roleBody.extend({ reason: z.string().trim().max(300).optional() }),
   handler: async (ctx) => {
     const code = ctx.params.code;
@@ -151,7 +151,7 @@ route({
 
 route({
   method: "DELETE", path: "/admin/platform-roles/:code", tag: "saf-team", summary: "Delete an unused custom platform role",
-  auth: { platform: "platform.staff.permissions.manage", elevated: true },
+  auth: { platform: "platform.staff.permissions.manage", elevated: true }, stepUp: true,
   handler: async (ctx) => {
     const role = await ctx.db.platformRole.findUnique({ where: { code: ctx.params.code }, include: { _count: { select: { users: true } } } });
     if (!role) throw notFound("Role");
@@ -196,7 +196,7 @@ const profileFields = {
 
 route({
   method: "POST", path: "/admin/team", tag: "saf-team", summary: "Invite a SAF Team member (email invitation, no password is ever set by an admin)",
-  auth: { platform: "platform.staff.create", elevated: true },
+  auth: { platform: "platform.staff.create", elevated: true }, stepUp: true,
   body: z.object({
     ...profileFields,
     email: z.string().trim().toLowerCase().email().max(200),
@@ -272,7 +272,7 @@ route({
 
 route({
   method: "PATCH", path: "/admin/team/:id", tag: "saf-team", summary: "Edit, re-role, suspend or reactivate a team member",
-  auth: { platform: "platform.staff.update", elevated: true },
+  auth: { platform: "platform.staff.update", elevated: true }, stepUp: true,
   body: z.object({
     fullName: profileFields.fullName.optional(),
     phone: z.string().trim().max(20).nullable().optional(),

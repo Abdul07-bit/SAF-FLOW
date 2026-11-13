@@ -19,6 +19,16 @@ export function setActiveBranch(id: string | null) {
   currentBranch = id;
 }
 
+/**
+ * Sensitive actions answer STEP_UP_REQUIRED until the user re-authenticates.
+ * <StepUpPrompt/> registers a handler that asks for the password / code; the
+ * request is then retried once, so screens need no special handling.
+ */
+let stepUpHandler: (() => Promise<boolean>) | null = null;
+export function setStepUpHandler(fn: (() => Promise<boolean>) | null) {
+  stepUpHandler = fn;
+}
+
 interface CallOptions {
   method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   body?: unknown;
@@ -28,6 +38,15 @@ interface CallOptions {
 }
 
 export async function api<T = any>(path: string, opts: CallOptions = {}): Promise<T> {
+  try {
+    return await call<T>(path, opts);
+  } catch (e) {
+    if (e instanceof ApiError && e.code === "STEP_UP_REQUIRED" && stepUpHandler && (await stepUpHandler())) return call<T>(path, opts);
+    throw e;
+  }
+}
+
+async function call<T>(path: string, opts: CallOptions): Promise<T> {
   const method = opts.method ?? (opts.body !== undefined || opts.form ? "POST" : "GET");
   const headers: Record<string, string> = {};
   if (method !== "GET") headers["x-saf-request"] = "1";
@@ -50,7 +69,11 @@ export async function api<T = any>(path: string, opts: CallOptions = {}): Promis
   if (!res.ok) {
     const err = new ApiError(res.status, data?.error?.code ?? "ERROR", data?.error?.message ?? `Request failed (${res.status})`, data?.error?.details);
     if (typeof window !== "undefined" && !opts.noRedirect) {
-      if (res.status === 401 && !window.location.pathname.startsWith("/login")) {
+      if (err.code === "MFA_REQUIRED" && window.location.pathname !== "/mfa") {
+        window.location.href = "/mfa";
+      } else if (err.code === "MFA_ENROLLMENT_REQUIRED" && window.location.pathname !== "/account/security") {
+        window.location.href = "/account/security?required=1";
+      } else if (res.status === 401 && !window.location.pathname.startsWith("/login") && window.location.pathname !== "/mfa") {
         window.location.href = `/login?next=${encodeURIComponent(window.location.pathname)}`;
       } else if (err.code === "PASSWORD_CHANGE_REQUIRED" && window.location.pathname !== "/change-password") {
         window.location.href = "/change-password";

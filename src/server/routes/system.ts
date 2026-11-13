@@ -2,7 +2,8 @@ import { timingSafeEqual } from "node:crypto";
 import { route, listRoutes } from "../http/router";
 import { HttpError, notFound } from "../http/errors";
 import { withPlatform } from "../db";
-import { storage } from "../core/storage";
+import { isPrivateKey, storage } from "../core/storage";
+import { verifyFileUrl } from "../core/keys";
 import { runRenewalJob } from "../core/subscriptions";
 import { writeAudit } from "../core/audit";
 import { buildOpenApi } from "../openapi";
@@ -21,10 +22,19 @@ route({
   handler: async (ctx) => {
     const key = ctx.params.key;
     if (!/^t\/[0-9a-f-]{36}\/[a-z]+\/[0-9a-f-]{36}\.(png|jpg)$/.test(key)) throw notFound("File");
+    const isPrivate = isPrivateKey(key);
+    // Employee photos need the short-lived signature issued with the URL.
+    if (isPrivate && !verifyFileUrl(key, Number(ctx.query.exp), String(ctx.query.sig ?? ""))) throw notFound("File");
     const file = await storage().get(key);
     if (!file) throw notFound("File");
     return new Response(Buffer.from(file.body), {
-      headers: { "content-type": file.contentType, "cache-control": "private, max-age=86400", "x-content-type-options": "nosniff" },
+      headers: {
+        "content-type": file.contentType,
+        "cache-control": isPrivate ? "private, max-age=600" : "public, max-age=86400",
+        "x-content-type-options": "nosniff",
+        "content-security-policy": "default-src 'none'; sandbox",
+        "cross-origin-resource-policy": "same-origin",
+      },
     });
   },
 });
@@ -47,6 +57,11 @@ route({
 });
 
 route({
-  method: "GET", path: "/docs/openapi.json", tag: "system", summary: "OpenAPI 3.1 description of this API", auth: { public: true },
-  handler: () => buildOpenApi(listRoutes()),
+  method: "GET", path: "/docs/openapi.json", tag: "system", summary: "OpenAPI 3.1 description of this API (not served in production unless PUBLIC_API_DOCS=1)",
+  auth: { public: true },
+  handler: () => {
+    // The endpoint inventory helps attackers map the API; production keeps it private.
+    if (process.env.NODE_ENV === "production" && process.env.PUBLIC_API_DOCS !== "1") throw notFound("Document");
+    return buildOpenApi(listRoutes());
+  },
 });

@@ -13,7 +13,8 @@ const buckets = new Map<string, Bucket>();
 let lastSweep = Date.now();
 
 export function rateLimit(key: string, limit: number, windowMs: number): { ok: boolean; retryAfterSec: number } {
-  if (process.env.SAF_DISABLE_RATE_LIMIT === "1") return { ok: true, retryAfterSec: 0 };
+  // Test switch; ignored in production so a stray variable cannot remove the limits.
+  if (process.env.SAF_DISABLE_RATE_LIMIT === "1" && process.env.NODE_ENV !== "production") return { ok: true, retryAfterSec: 0 };
   const now = Date.now();
   if (now - lastSweep > 60_000) {
     for (const [k, b] of buckets) if (b.resetAt <= now) buckets.delete(k);

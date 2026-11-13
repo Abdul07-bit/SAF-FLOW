@@ -10,6 +10,8 @@ import {
   assertFeature, assertPermission, assertProductUsable, hasAny, loadProductAccess, qualify, type ProductAccess,
 } from "../core/access";
 import { writeAudit } from "../core/audit";
+import { mfaRequiredFor, stepUpWindowMs } from "../auth/mfa";
+import { randomUUID } from "node:crypto";
 import { forbidden, HttpError, notFound, unauthorized } from "./errors";
 
 export type Method = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
@@ -34,7 +36,14 @@ export type Method = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
  */
 export type Policy =
   | { public: true }
-  | { session: true; allowPasswordChange?: boolean }
+  | {
+      session: true;
+      allowPasswordChange?: boolean;
+      /** Reachable while the second factor is outstanding (MFA verification only). */
+      allowMfaPending?: boolean;
+      /** Reachable before a user who must use MFA has enrolled (enrolment, sign-out, /me). */
+      allowMfaEnrollment?: boolean;
+    }
   | {
       /** Any-of platform permission keys. */
       platform: PlatformPermissionKey | readonly PlatformPermissionKey[];
@@ -59,6 +68,8 @@ export interface Ctx<B = any, Q = any> {
   form: FormData | null;
   ip: string;
   userAgent: string;
+  /** Correlation id, echoed as x-request-id and written into audit entries. */
+  requestId: string;
   session: AuthedSession | null;
   user: SessionUser;
   /** Set on platform routes. */
@@ -92,6 +103,11 @@ export interface RouteDef<B = any, Q = any> {
   /** Raw body (webhooks): handler reads ctx.req itself. */
   rawBody?: boolean;
   rateLimit?: { limit: number; windowMs: number };
+  /**
+   * Sensitive action: requires a fresh authentication (sign-in, MFA, or
+   * POST /auth/step-up) within STEP_UP_WINDOW_MINUTES (default 10).
+   */
+  stepUp?: boolean;
   /** Audit action name for mutations; false disables the automatic entry. */
   audit?: string | false;
   handler: (ctx: Ctx<B, Q>) => Promise<unknown> | unknown;
@@ -148,10 +164,48 @@ function safeDecode(s: string) {
   }
 }
 
-function clientIp(req: Request): string {
-  const xff = req.headers.get("x-forwarded-for");
-  if (xff) return xff.split(",")[0].trim();
-  return req.headers.get("x-real-ip") || "local";
+/**
+ * Client address for rate limits and audit. Only proxies we run may set it:
+ * TRUSTED_PROXY_HOPS (default 1, the bundled nginx) counts proxies from the
+ * right of X-Forwarded-For, so a value a client prepends is never used.
+ * Set it to 0 when the app is reachable without a proxy in front.
+ */
+export function clientIp(req: Request): string {
+  const hops = Math.max(0, Number(process.env.TRUSTED_PROXY_HOPS ?? 1));
+  if (hops === 0) return "direct";
+  const xff = (req.headers.get("x-forwarded-for") || "").split(",").map((s) => s.trim()).filter(Boolean);
+  if (xff.length) return (xff[Math.max(0, xff.length - hops)] ?? xff[0]).slice(0, 64);
+  return (req.headers.get("x-real-ip") || "local").slice(0, 64);
+}
+
+export const MAX_JSON_BYTES = 1024 * 1024;
+export const MAX_MULTIPART_BYTES = 3 * 1024 * 1024;
+
+/** Reads a request body, refusing more than `limit` bytes even without a Content-Length. */
+async function readCapped(req: Request, limit: number): Promise<Uint8Array<ArrayBuffer>> {
+  const declared = Number(req.headers.get("content-length") || "0");
+  if (declared > limit) throw new HttpError(413, "PAYLOAD_TOO_LARGE", "The request is too large.");
+  if (!req.body) return new Uint8Array();
+  const reader = req.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > limit) {
+      await reader.cancel().catch(() => undefined);
+      throw new HttpError(413, "PAYLOAD_TOO_LARGE", "The request is too large.");
+    }
+    chunks.push(value);
+  }
+  const out = new Uint8Array(total);
+  let off = 0;
+  for (const c of chunks) {
+    out.set(c, off);
+    off += c.byteLength;
+  }
+  return out;
 }
 
 const jsonReplacer = (_k: string, v: unknown) => (typeof v === "bigint" ? v.toString() : v);
@@ -163,7 +217,7 @@ export function json(status: number, data: unknown, headers?: Headers): Response
   return new Response(JSON.stringify(data, jsonReplacer), { status, headers: h });
 }
 
-const DENIAL_CODES = new Set(["FEATURE_NOT_IN_PLAN", "PERMISSION_DENIED", "PLATFORM_ONLY", "PLATFORM_PERMISSION_DENIED", "BRANCH_ACCESS_DENIED", "PRODUCT_ACCESS_DENIED", "PRODUCT_NOT_SUBSCRIBED"]);
+const DENIAL_CODES = new Set(["STEP_UP_REQUIRED", "MFA_REQUIRED", "MFA_ENROLLMENT_REQUIRED", "FEATURE_NOT_IN_PLAN", "PERMISSION_DENIED", "PLATFORM_ONLY", "PLATFORM_PERMISSION_DENIED", "BRANCH_ACCESS_DENIED", "PRODUCT_ACCESS_DENIED", "PRODUCT_NOT_SUBSCRIBED"]);
 
 export async function handleRequest(req: Request): Promise<Response> {
   const url = new URL(req.url);
@@ -171,12 +225,15 @@ export async function handleRequest(req: Request): Promise<Response> {
   const method = req.method.toUpperCase();
   const headers = new Headers();
   const ip = clientIp(req);
+  const inboundId = req.headers.get("x-request-id") || "";
+  const requestId = /^[A-Za-z0-9-]{8,64}$/.test(inboundId) ? inboundId : randomUUID();
+  headers.set("x-request-id", requestId);
   const m = match(method, path);
-  if (!m) return json(404, { error: { code: "NOT_FOUND", message: `No endpoint for ${method} ${path}` } });
+  if (!m) return json(404, { error: { code: "NOT_FOUND", message: "No such endpoint." } }, headers);
   const { def } = m.c;
 
   const ctx = {
-    req, params: m.params, body: undefined, query: {}, form: null, ip,
+    req, params: m.params, body: undefined, query: {}, form: null, ip, requestId,
     userAgent: (req.headers.get("user-agent") || "").slice(0, 300),
     session: null, status: 200, headers,
   } as unknown as Ctx & { _audited?: boolean };
@@ -192,6 +249,10 @@ export async function handleRequest(req: Request): Promise<Response> {
       }
     }
 
+    // Anonymous callers of protected routes are turned away before any input
+    // validation runs, so they learn nothing about the expected payloads.
+    if (!("public" in def.auth) && !readCookie(req.headers.get("cookie"), SESSION_COOKIE)) throw unauthorized();
+
     const mutating = method !== "GET";
     // CSRF: browsers cannot send a custom header cross-site without a CORS
     // preflight, which this API never approves. Combined with SameSite=Lax.
@@ -201,9 +262,15 @@ export async function handleRequest(req: Request): Promise<Response> {
     const rawQuery = Object.fromEntries(url.searchParams);
     ctx.query = def.query ? def.query.parse(rawQuery) : rawQuery;
     if (mutating && !def.rawBody) {
-      if (def.multipart) ctx.form = await req.formData();
-      else {
-        const text = await req.text();
+      if (def.multipart) {
+        const bytes = await readCapped(req, MAX_MULTIPART_BYTES);
+        ctx.form = await new Response(Buffer.from(bytes), { headers: { "content-type": req.headers.get("content-type") || "" } })
+          .formData()
+          .catch(() => {
+            throw new HttpError(400, "INVALID_FORM", "Request body must be multipart form data.");
+          });
+      } else {
+        const text = new TextDecoder().decode(await readCapped(req, MAX_JSON_BYTES));
         let parsed: unknown = {};
         if (text) {
           try {
@@ -239,9 +306,15 @@ async function runWithPolicy(def: RouteDef, ctx: Ctx & { _audited?: boolean }) {
   if (!session) throw unauthorized();
   ctx.session = session;
   ctx.user = session.user;
-  const allowPw = "session" in auth && auth.allowPasswordChange;
-  if (session.user.mustChangePassword && !allowPw)
+  const sessionPolicy = "session" in auth ? auth : null;
+  if (session.mfaPending && !sessionPolicy?.allowMfaPending)
+    throw new HttpError(401, "MFA_REQUIRED", "Enter the code from your authenticator app to finish signing in.");
+  if (session.user.mustChangePassword && !sessionPolicy?.allowPasswordChange)
     throw forbidden("PASSWORD_CHANGE_REQUIRED", "Please change your temporary password to continue.");
+  if (!session.mfaPending && !session.user.mfaEnabled && mfaRequiredFor(session.user) && !sessionPolicy?.allowMfaEnrollment)
+    throw forbidden("MFA_ENROLLMENT_REQUIRED", "Your account must use two-step verification. Please set it up to continue.");
+  if (def.stepUp && (!session.stepUpAt || Date.now() - session.stepUpAt.getTime() > stepUpWindowMs()))
+    throw forbidden("STEP_UP_REQUIRED", "Please confirm it is you to continue with this action.");
 
   ctx.audit = async (action, entity, meta) => {
     ctx._audited = true;
@@ -254,7 +327,7 @@ async function runWithPolicy(def: RouteDef, ctx: Ctx & { _audited?: boolean }) {
       productCode: ctx.product,
       ip: ctx.ip,
       userAgent: ctx.userAgent,
-      meta,
+      meta: { ...(meta ?? {}), requestId: ctx.requestId },
     });
   };
 
@@ -348,7 +421,7 @@ async function logDenial(ctx: Ctx, def: RouteDef, err: HttpError) {
       productCode: ctx.product ?? (ctx.params.product as string | undefined),
       ip: ctx.ip,
       userAgent: ctx.userAgent,
-      meta: { code: err.code, route: `${def.method} ${def.path}`, details: err.details as object },
+      meta: { code: err.code, route: `${def.method} ${def.path}`, details: err.details as object, requestId: ctx.requestId },
     }),
   );
 }
@@ -375,13 +448,19 @@ export function errorResponse(err: unknown, headers?: Headers): Response {
         error: { code: "DUPLICATE", message: `A record with the same ${fields.join(", ") || "value"} already exists.`, details: { fields } },
       }, headers);
     }
-    if (err.code === "P2025") return json(404, { error: { code: "NOT_FOUND", message: "Record not found." } }, headers);
+    // P2025 missing record; P2023 malformed id (e.g. not a UUID): both are simply "not found".
+    if (err.code === "P2025" || err.code === "P2023") return json(404, { error: { code: "NOT_FOUND", message: "Record not found." } }, headers);
     if (err.code === "P2003")
       return json(409, { error: { code: "IN_USE", message: "This record is linked to other records and cannot be changed." } }, headers);
   }
   const msg = err instanceof Error ? err.message : String(err);
+  // Database guards (security_hardening migration).
+  if (msg.includes("SAF_CROSS_TENANT_REF"))
+    return json(400, { error: { code: "INVALID_REFERENCE", message: "A selected record does not exist." } }, headers);
+  if (msg.includes("SAF_AUDIT_IMMUTABLE"))
+    return json(403, { error: { code: "AUDIT_IMMUTABLE", message: "Audit records cannot be changed." } }, headers);
   if (msg.includes("stay_reservations_no_overlap"))
     return json(409, { error: { code: "ROOM_ALREADY_BOOKED", message: "The room is already booked for some of these dates." } }, headers);
-  console.error("[api] unhandled error", err);
+  console.error("[api] unhandled error", headers?.get("x-request-id") ?? "", err instanceof Error ? `${err.name}: ${err.message}` : err);
   return json(500, { error: { code: "INTERNAL", message: "Something went wrong. Please try again." } }, headers);
 }

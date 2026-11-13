@@ -235,7 +235,7 @@ route({
 });
 
 route({
-  method: "POST", path: "/admin/businesses/:id/status", tag: "admin", summary: "Suspend or activate a business", auth: { platform: "platform.business.suspend", target: "business" },
+  method: "POST", path: "/admin/businesses/:id/status", tag: "admin", summary: "Suspend or activate a business", auth: { platform: "platform.business.suspend", target: "business" }, stepUp: true,
   body: z.object({ status: z.enum(["ACTIVE", "SUSPENDED"]), reason: z.string().max(300).optional() }),
   handler: async ({ db, params, body, audit, user }) => {
     const t = await db.tenant.findUnique({ where: { id: params.id } });
@@ -336,7 +336,7 @@ route({
 });
 
 route({
-  method: "PATCH", path: "/admin/plans/:id", tag: "admin", summary: "Change plan pricing (per product)", auth: { platform: "platform.catalog.manage" },
+  method: "PATCH", path: "/admin/plans/:id", tag: "admin", summary: "Change plan pricing (per product)", auth: { platform: "platform.catalog.manage" }, stepUp: true,
   body: z.object({
     name: z.string().min(2).max(40).optional(),
     description: z.string().max(300).optional(),
@@ -590,7 +590,7 @@ route({
 });
 
 route({
-  method: "POST", path: "/admin/users/:id/reset-password", tag: "admin", summary: "Issue a new temporary password", auth: { platform: "platform.users.manage", target: "user" },
+  method: "POST", path: "/admin/users/:id/reset-password", tag: "admin", summary: "Issue a new temporary password", auth: { platform: "platform.users.manage", target: "user" }, stepUp: true,
   handler: async ({ db, params, audit }) => {
     const u = await db.user.findUnique({ where: { id: params.id } });
     if (!u) throw notFound("User");
@@ -622,7 +622,7 @@ route({
 });
 
 route({
-  method: "POST", path: "/admin/users/:id/status", tag: "admin", summary: "Enable or disable any account", auth: { platform: "platform.users.manage", target: "user" },
+  method: "POST", path: "/admin/users/:id/status", tag: "admin", summary: "Enable or disable any account", auth: { platform: "platform.users.manage", target: "user" }, stepUp: true,
   body: z.object({ isActive: z.boolean() }),
   handler: async ({ db, params, body, audit, user }) => {
     if (params.id === user.id) throw badRequest("You cannot disable your own account.");
@@ -687,7 +687,7 @@ route({
 });
 
 route({
-  method: "POST", path: "/admin/invoices/:id/void", tag: "admin", summary: "Void an unpaid invoice", auth: { platform: "platform.billing.manage", target: "invoice" },
+  method: "POST", path: "/admin/invoices/:id/void", tag: "admin", summary: "Void an unpaid invoice", auth: { platform: "platform.billing.manage", target: "invoice" }, stepUp: true,
   body: z.object({ reason: z.string().max(200).optional() }),
   handler: async ({ db, params, audit, body }) => {
     const inv = await db.invoice.findUnique({ where: { id: params.id } });
@@ -729,7 +729,7 @@ route({
 });
 
 route({
-  method: "POST", path: "/admin/payments", tag: "admin", summary: "Record a manual payment against an invoice", auth: { platform: "platform.billing.manage", target: "bodyInvoice" },
+  method: "POST", path: "/admin/payments", tag: "admin", summary: "Record a manual payment against an invoice", auth: { platform: "platform.billing.manage", target: "bodyInvoice" }, stepUp: true,
   body: z.object({
     invoiceId: z.uuid(), amount: z.number().int().min(1).optional(), method: paymentMethodSchema,
     reference: z.string().max(100).optional(), notes: z.string().max(300).optional(), paidAt: isoDate.optional(),
@@ -872,7 +872,7 @@ route({
 });
 
 route({
-  method: "PUT", path: "/admin/settings", tag: "admin", summary: "Update global platform settings", auth: { platform: "platform.settings.manage" },
+  method: "PUT", path: "/admin/settings", tag: "admin", summary: "Update global platform settings", auth: { platform: "platform.settings.manage" }, stepUp: true,
   body: platformSettingsSchema.partial(),
   handler: async ({ db, body, audit }) => {
     const s = await savePlatformSettings(db, body);

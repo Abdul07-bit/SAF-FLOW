@@ -3,6 +3,8 @@
  * Next.js catch-all route (src/app/api/[...path]/route.ts) and by the tests.
  */
 import "./routes/auth";
+import "./routes/mfa";
+import "./routes/security";
 import "./routes/admin";
 import "./routes/team";
 import "./routes/tenant";
