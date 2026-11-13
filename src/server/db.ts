@@ -9,7 +9,9 @@ if (process.env.NODE_ENV !== "production") globalForPrisma.__safPrisma = prisma;
 
 export type Tx = Prisma.TransactionClient;
 
-const TX_OPTS = { maxWait: 10_000, timeout: 30_000 };
+// SAF_TX_TIMEOUT_MS: raised only for one-off jobs over a slow link (e.g. seeding
+// a remote database from a laptop); requests keep the 30 s default.
+const TX_OPTS = { maxWait: 10_000, timeout: Number(process.env.SAF_TX_TIMEOUT_MS || 30_000) };
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export function isUuid(v: unknown): v is string {

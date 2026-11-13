@@ -17,3 +17,7 @@ storage-test/
 *.keystore
 *.jks
 signing-key-info.txt
+
+# Supabase connection details for one-time setup (never commit)
+.env.supabase
+.env.vercel
