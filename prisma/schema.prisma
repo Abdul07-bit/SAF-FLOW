@@ -339,6 +339,11 @@ model Business {
   pincode   String?
   gstin     String?
   logoKey   String?  @map("logo_key")
+  /// Business's own UPI ID for customer payments (QR with the bill amount).
+  upiId        String? @map("upi_id")
+  upiPayeeName String? @map("upi_payee_name")
+  /// Uploaded UPI QR image (used when no UPI ID is set).
+  upiQrKey     String? @map("upi_qr_key")
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 

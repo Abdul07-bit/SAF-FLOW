@@ -77,6 +77,51 @@ function InlineForm({ fields, initial, onSubmit, submitLabel = "Save changes" }:
   );
 }
 
+const UPI_FIELDS = {
+  upiId: f.text("UPI ID", { max: 320, help: "e.g. shopname@okaxis. Customers get a QR with the bill amount filled in." }),
+  upiPayeeName: f.text("Name shown in the UPI app", { max: 60, help: "Usually the bank account holder's name." }),
+};
+
+/** Where this business's customers pay. Owner only: a staff member must never be able to swap it. */
+function CustomerUpiCard() {
+  const p = useProduct();
+  const qrFile = useRef<HTMLInputElement>(null);
+  const [busy, run] = useAction();
+  const owner = p.user.isTenantOwner;
+  const uploadQr = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const picked = e.target.files?.[0];
+    e.target.value = "";
+    if (!picked) return;
+    const form = new FormData();
+    form.append("file", picked);
+    await run(async () => { await api(`${p.base}/business/upi-qr`, { form }); await p.reload(); }, "UPI QR saved");
+  };
+  return (
+    <Card title="Customer payments (UPI)" subtitle="Shown as a QR on the cashier screen and on unpaid bills. The cashier checks the payment in your UPI app, then settles the bill as UPI.">
+      {owner ? (
+        <div className="space-y-4">
+          <InlineForm fields={UPI_FIELDS} initial={p.tenant} submitLabel="Save UPI details"
+            onSubmit={async (v) => { await api(`${p.base}/business`, { method: "PUT", body: { upiId: v.upiId ?? "", upiPayeeName: v.upiPayeeName ?? "" } }); await p.reload(); }} />
+          <div className="flex flex-wrap items-center gap-4 border-t border-slate-100 pt-4">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            {p.tenant.upiQrUrl ? <img src={p.tenant.upiQrUrl} alt="Your UPI QR" className="h-24 w-24 rounded-lg border border-slate-200 object-contain" /> : <span className="flex h-24 w-24 items-center justify-center rounded-lg border border-dashed border-slate-300 p-2 text-center text-xs text-slate-400">No QR image</span>}
+            <div className="space-y-2">
+              <p className="max-w-xs text-xs text-slate-600">Optional: upload the QR from your UPI app. It is used only when no UPI ID is set (customers then type the amount).</p>
+              <input ref={qrFile} type="file" accept="image/png,image/jpeg" className="hidden" onChange={uploadQr} />
+              <div className="flex gap-2">
+                <Button size="sm" loading={busy} onClick={() => qrFile.current?.click()}><ImageUp className="h-4 w-4" /> Upload QR image</Button>
+                {p.tenant.upiQrUrl && <Button size="sm" variant="ghost" loading={busy} onClick={() => run(async () => { await api(`${p.base}/business/upi-qr`, { method: "DELETE" }); await p.reload(); }, "QR image removed")}>Remove</Button>}
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : (
+        <KeyValue items={[["UPI ID", p.tenant.upiId ?? "Not set"], ["Name", p.tenant.upiPayeeName], ["QR image", p.tenant.upiQrUrl ? "Uploaded" : "None"]]} />
+      )}
+    </Card>
+  );
+}
+
 export function SettingsScreen() {
   const p = useProduct();
   const file = useRef<HTMLInputElement>(null);
@@ -112,6 +157,7 @@ export function SettingsScreen() {
               <Button loading={busy} onClick={() => file.current?.click()}><ImageUp className="h-4 w-4" /> Upload logo</Button>
             </div>
           </Card>
+          <CustomerUpiCard />
           <Card title="Business code"><KeyValue items={[["Code", <span key="c" className="font-mono">{p.tenant.code}</span>], ["Staff login format", <span key="l" className="font-mono">{p.tenant.code}@name</span>]]} /></Card>
         </div>
       </div>

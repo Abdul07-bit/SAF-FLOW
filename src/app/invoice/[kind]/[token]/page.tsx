@@ -13,10 +13,14 @@ import { useApi } from "@/lib/client";
 import { humanize } from "@/shared/fields";
 import { themeVars } from "@/components/shell";
 import { Badge, Button, Spinner } from "@/components/ui";
+import { UpiQrBlock, type ShopUpiInfo } from "@/components/shop-upi";
 
 interface InvoiceData {
   kind: "dine" | "stay" | "bill";
   status?: string;
+  /** Settled in full. Unpaid bills carry the business's UPI QR in `pay`. */
+  isPaid?: boolean;
+  pay?: ShopUpiInfo | null;
   seller: { name: string; address: string; phone: string | null; gstin: string | null; logoUrl: string | null };
   invoiceNo: string | null;
   date: string | null;
@@ -49,29 +53,32 @@ export default function PublicInvoicePage() {
   const d = inv.data;
   const hasLineDiscount = d.lines.some((l) => l.discount);
   const qty = (n: number) => Number(n).toLocaleString("en-IN", { maximumFractionDigits: 3 });
+  // Restaurant bills can be printed / shared before payment: no invoice number yet.
+  const unpaidBill = d.isPaid === false && !d.invoiceNo;
 
   return (
     <div style={themeVars(PRODUCTS[d.kind].theme)} className="mx-auto max-w-2xl px-3 py-6 print:max-w-none print:p-0">
       <div className="no-print mb-3 flex justify-end"><Button onClick={() => window.print()}><Printer className="h-4 w-4" /> Print / save as PDF</Button></div>
-      <article className="print-card rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-8">
-        <header className="flex flex-wrap items-start justify-between gap-4 border-b border-slate-200 pb-4">
-          <div className="flex items-start gap-3">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            {d.seller.logoUrl && <img src={d.seller.logoUrl} alt="" className="h-14 w-14 rounded-lg object-contain" />}
-            <div>
-              <h1 className="text-lg font-semibold text-slate-900">{d.seller.name}</h1>
-              {d.seller.address && <p className="max-w-xs text-sm text-slate-600">{d.seller.address}</p>}
-              {d.seller.phone && <p className="text-sm text-slate-600">Phone: {d.seller.phone}</p>}
-              {d.seller.gstin && <p className="text-sm text-slate-600">GSTIN: {d.seller.gstin}</p>}
+      <article className="print-card relative overflow-hidden rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-8">
+        <header className="-mx-5 -mt-5 rounded-t-2xl bg-brand px-5 py-5 text-white sm:-mx-8 sm:-mt-8 sm:px-8 print:rounded-none" style={{ printColorAdjust: "exact", WebkitPrintColorAdjust: "exact" }}>
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <div className="flex items-center gap-4">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              {d.seller.logoUrl && <img src={d.seller.logoUrl} alt="" className="h-16 w-16 rounded-xl bg-white object-contain p-1.5 shadow-sm" />}
+              <div>
+                <h1 className="text-xl font-semibold leading-tight">{d.seller.name}</h1>
+                {d.seller.address && <p className="max-w-xs text-sm text-white/85">{d.seller.address}</p>}
+                <p className="text-sm text-white/85">{[d.seller.phone && `Phone: ${d.seller.phone}`, d.seller.gstin && `GSTIN: ${d.seller.gstin}`].filter(Boolean).join(" · ")}</p>
+              </div>
+            </div>
+            <div className="text-right">
+              <p className="text-xs font-semibold uppercase tracking-wider text-white/80">{unpaidBill ? "Bill" : d.seller.gstin ? "Tax invoice" : "Invoice"}</p>
+              {d.invoiceNo && <p className="font-mono text-base font-semibold">{d.invoiceNo}</p>}
+              <p className="text-sm text-white/85">{fmtDateTime(d.date)}</p>
             </div>
           </div>
-          <div className="text-right">
-            <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">{d.seller.gstin ? "Tax invoice" : "Invoice"}</p>
-            <p className="font-mono text-base font-semibold text-slate-900">{d.invoiceNo ?? "-"}</p>
-            <p className="text-sm text-slate-600">{fmtDateTime(d.date)}</p>
-            {d.status === "VOID" && <div className="mt-1"><Badge tone="bad">Void</Badge></div>}
-          </div>
         </header>
+        {d.status === "VOID" && <div className="mt-3"><Badge tone="bad">Void</Badge></div>}
 
         <div className="grid gap-4 py-4 text-sm sm:grid-cols-2">
           <div>
@@ -108,7 +115,15 @@ export default function PublicInvoicePage() {
           </tbody>
         </table>
 
-        <dl className="ml-auto mt-4 w-full max-w-xs space-y-1 border-t border-slate-200 pt-3 text-sm">
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-4">
+        <div className="flex-1">
+          {d.isPaid && d.status !== "VOID" && (
+            <div role="img" aria-label="Paid" className="ml-2 inline-block rotate-[-10deg] rounded-lg border-4 border-emerald-600 px-4 py-1 text-3xl font-black uppercase tracking-widest text-emerald-600 opacity-85" style={{ printColorAdjust: "exact", WebkitPrintColorAdjust: "exact" }}>
+              Paid
+            </div>
+          )}
+        </div>
+        <dl className="w-full max-w-xs space-y-1 border-t border-slate-200 pt-3 text-sm">
           <div className="flex justify-between"><dt className="text-slate-600">Subtotal</dt><dd className="tnum">{formatINR(d.subtotal)}</dd></div>
           {d.discount > 0 && <div className="flex justify-between"><dt className="text-slate-600">Discount</dt><dd className="tnum">- {formatINR(d.discount)}</dd></div>}
           <div className="flex justify-between"><dt className="text-slate-600">GST</dt><dd className="tnum">{formatINR(d.tax)}</dd></div>
@@ -118,6 +133,7 @@ export default function PublicInvoicePage() {
           {d.paid !== undefined && <div className="flex justify-between"><dt className="text-slate-600">Paid</dt><dd className="tnum">{formatINR(d.paid)}</dd></div>}
           {d.balance !== undefined && d.balance !== 0 && <div className="flex justify-between font-semibold"><dt>{d.balance > 0 ? "Balance due" : "Refund due"}</dt><dd className="tnum">{formatINR(Math.abs(d.balance))}</dd></div>}
         </dl>
+        </div>
 
         {!!d.payments?.length && (
           <div className="mt-4 border-t border-slate-200 pt-3 text-sm">
@@ -126,7 +142,19 @@ export default function PublicInvoicePage() {
           </div>
         )}
 
-        {d.footer && <p className="mt-6 border-t border-slate-200 pt-3 text-center text-sm text-slate-600">{d.footer}</p>}
+        {d.pay && (
+          <section className="mt-6 flex flex-col items-center gap-4 rounded-xl border border-slate-200 bg-slate-50 p-4 sm:flex-row sm:items-center" aria-label="Pay by UPI">
+            <UpiQrBlock upi={d.pay} compact />
+            <div className="text-center text-sm text-slate-700 sm:text-left">
+              <p className="text-base font-semibold text-slate-900">Pay {formatINR(d.pay.amount)} by UPI</p>
+              <p>Scan with Google Pay, PhonePe, Paytm or any UPI app.</p>
+              <p className="mt-1">Show the payment to the cashier; your paid bill is sent once it is confirmed.</p>
+              {d.pay.link && <a href={d.pay.link} className="no-print mt-2 inline-block font-medium text-brand underline sm:hidden">Open UPI app</a>}
+            </div>
+          </section>
+        )}
+
+        <p className="mt-6 text-center text-base font-semibold text-slate-900">{d.footer || (d.isPaid ? "Thank you for your payment!" : "Thank you!")}</p>
         <p className="mt-2 text-center text-[11px] text-slate-400">Generated by {PRODUCTS[d.kind].name}</p>
       </article>
     </div>

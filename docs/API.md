@@ -23,7 +23,7 @@ Each endpoint declares exactly one policy, enforced by the router before the han
 - **Tenant user of a product** - checks, in order: business active, product subscribed, subscription usable,
   the user has a role in that product, the plan (or a per-business override) includes the feature, the role grants the permission.
 
-319 endpoints.
+326 endpoints.
 
 ## Authentication & session
 
@@ -57,12 +57,14 @@ Each endpoint declares exactly one policy, enforced by the router before the han
 | GET | `/api/admin/businesses` | List businesses (tenants) | SAF Super Admin only. |
 | POST | `/api/admin/businesses` | Add new business: tenant, products, plans and manager credentials | SAF Super Admin only. |
 | GET | `/api/admin/businesses/:id` | Business detail | SAF Super Admin only. |
-| PATCH | `/api/admin/businesses/:id` | Edit business profile | SAF Super Admin only. |
+| PATCH | `/api/admin/businesses/:id` | Edit business profile (incl. its UPI payment details) | SAF Super Admin only. |
 | GET | `/api/admin/businesses/:id/features` | Effective features of a business per subscribed product | SAF Super Admin only. |
 | PUT | `/api/admin/businesses/:id/features/:key` | Grant / revoke a single feature for one business | SAF Super Admin only. |
 | POST | `/api/admin/businesses/:id/logo` | Upload business logo (PNG/JPEG) | SAF Super Admin only. |
 | POST | `/api/admin/businesses/:id/products` | Activate another SAF product for a business | SAF Super Admin only. |
 | POST | `/api/admin/businesses/:id/status` | Suspend or activate a business | SAF Super Admin only. |
+| DELETE | `/api/admin/businesses/:id/upi-qr` | Remove the business's UPI QR image | SAF Super Admin only. |
+| POST | `/api/admin/businesses/:id/upi-qr` | Upload the business's UPI QR image (customer payments) | SAF Super Admin only. |
 | GET | `/api/admin/businesses/code-available` | Check whether a business code is free | SAF Super Admin only. |
 | GET | `/api/admin/defaults` | Defaults for onboarding forms (today, plan prices) | SAF Super Admin only. |
 | GET | `/api/admin/employees` | Employee accounts across all businesses | SAF Super Admin only. |
@@ -154,6 +156,8 @@ Each endpoint declares exactly one policy, enforced by the router before the han
 |---|---|---|---|
 | PUT | `/api/:product/business` | Edit the business profile (owner only) | Tenant user of the product in the URL with a usable subscription; role permission: settings.manage. |
 | POST | `/api/:product/business/logo` | Upload business logo (used on invoices and ID cards) | Tenant user of the product in the URL with a usable subscription; role permission: settings.manage. |
+| DELETE | `/api/:product/business/upi-qr` | Remove the business's UPI QR image | Tenant user of the product in the URL with a usable subscription; role permission: settings.manage. |
+| POST | `/api/:product/business/upi-qr` | Upload the business's UPI QR image (customer payments) | Tenant user of the product in the URL with a usable subscription; role permission: settings.manage. |
 | PUT | `/api/:product/settings` | Update product-specific settings | Tenant user of the product in the URL with a usable subscription; role permission: settings.manage. |
 
 ## Subscription & SAF billing
@@ -164,8 +168,11 @@ Each endpoint declares exactly one policy, enforced by the router before the han
 | GET | `/api/:product/billing/invoices/:id/upi` | UPI payment details for a SAF invoice: SAF's UPI ID, amount due and a scannable QR code | Tenant user of the product in the URL with a usable subscription (expired/suspended allowed); role permission: subscription.view. |
 | GET | `/api/:product/subscription` | Subscription, plan comparison and SAF invoices for this product | Tenant user of the product in the URL with a usable subscription (expired/suspended allowed); role permission: subscription.view. |
 | POST | `/api/:product/subscription/request` | Request an upgrade, renewal or plan change from SAF | Tenant user of the product in the URL with a usable subscription (expired/suspended allowed); role permission: subscription.view. |
+| GET | `/api/bill/payments/upi` | The business's UPI QR for a bill amount (shown to the customer on the cashier screen) | Tenant user of bill with a usable subscription; role permission: pos.use. |
 | GET | `/api/catalog/:product` | Plans and features of a SAF product (activation / upgrade page) | Any signed-in user. |
 | POST | `/api/catalog/:product/request` | Ask SAF to activate a product for this business | Any signed-in user. |
+| GET | `/api/dine/payments/upi` | The business's UPI QR for a bill amount (shown to the customer on the cashier screen) | Tenant user of dine with a usable subscription; role permission: billing.settle. |
+| GET | `/api/stay/payments/upi` | The business's UPI QR for a bill amount (shown to the customer on the cashier screen) | Tenant user of stay with a usable subscription; role permission: billing.manage. |
 
 ## Support
 
@@ -284,7 +291,7 @@ Each endpoint declares exactly one policy, enforced by the router before the han
 | POST | `/api/public/dine/menu/:qrToken/order` | Customer places an order from the table QR | Public (no session). |
 | GET | `/api/public/dine/orders/:token` | Customer order tracking | Public (no session). |
 | GET | `/api/public/invoice/bill/:token` | Printable retail invoice | Public (no session). |
-| GET | `/api/public/invoice/dine/:token` | Printable restaurant invoice | Public (no session). |
+| GET | `/api/public/invoice/dine/:token` | Printable restaurant bill / invoice (unpaid bills carry the restaurant's UPI QR) | Public (no session). |
 | GET | `/api/public/invoice/stay/:token` | Printable hotel invoice | Public (no session). |
 | GET | `/api/public/verify/:token` | Public staff ID verification (scanned from the card) | Public (no session). |
 

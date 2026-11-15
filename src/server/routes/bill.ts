@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { shopUpi } from "../payments/shop-upi";
 import { assertPublicLinkFresh } from "../core/public-links";
 import type { BillMovementType, Prisma } from "@prisma/client";
 import { addDays, endOfDayIST, financialYear, istDate, istMinutes, startOfDayIST, todayIST } from "@/lib/dates";
@@ -644,8 +645,11 @@ route({
       assertPublicLinkFresh(s.createdAt);
       const business = await db.business.findUniqueOrThrow({ where: { tenantId: ref.tenantId } });
       const settings = await getProductSettings(db, ref.tenantId, "bill");
+      const paid = s.paymentMethod !== "CREDIT";
+      const sellerName = settings.storeName || business.name;
       return {
-        kind: "bill", status: s.status,
+        kind: "bill", status: s.status, isPaid: paid && s.status !== "VOID",
+        pay: paid || s.status === "VOID" ? null : await shopUpi(business, s.total, s.invoiceNo ?? "Bill", sellerName),
         seller: { name: settings.storeName || business.name, address: [business.address, business.city, business.state, business.pincode].filter(Boolean).join(", "), phone: business.phone, gstin: settings.gstin || business.gstin, logoUrl: fileUrl(business.logoKey) },
         invoiceNo: s.invoiceNo, date: s.createdAt, customer: { name: s.customer?.name ?? null, phone: s.customer?.phone ?? null },
         meta: [s.counter?.name ?? "", `Cashier: ${s.cashier?.fullName ?? "-"}`, `Paid by ${s.paymentMethod}`].filter(Boolean),

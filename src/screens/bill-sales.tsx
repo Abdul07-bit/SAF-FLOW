@@ -10,6 +10,7 @@ import { billCustomers } from "@/shared/resources";
 import { BarList, ChartCard, ColumnChart, fmtCompactINR, KpiRow, StatTile } from "@/components/charts";
 import { ResourcePage } from "@/components/forms";
 import { useProduct } from "@/components/product-context";
+import { ShopUpiQr } from "@/components/shop-upi";
 import { RangePicker, useRange } from "@/components/range";
 import { ScanInput } from "@/components/scanner";
 import { Button, Card, DataTable, Empty, Field, Input, Loadable, Modal, Notice, PageHeader, Select, StatusBadge, toast, toastError, useAction } from "@/components/ui";
@@ -193,6 +194,7 @@ export function BillPos() {
             <Field label="Discount (Rs)"><Input type="number" min="0" step="0.01" value={discount} onChange={(e) => setDiscount(e.target.value)} /></Field>
             {method === "CASH" && <Field label="Cash received (Rs)" className="col-span-2"><Input type="number" min="0" step="0.01" value={received} onChange={(e) => setReceived(e.target.value)} placeholder={String(t.total / 100)} /></Field>}
             {method === "CASH" && change > 0 && <p className="col-span-2 rounded-lg bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-900">Return change: {formatINR(change)}</p>}
+            {method === "UPI" && lines.length > 0 && <div className="col-span-2"><ShopUpiQr base={p.base} amount={t.total} /></div>}
             <Field label="Customer phone"><Input type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="Optional" /></Field>
             <Field label="Customer name"><Input value={custName} onChange={(e) => setCustName(e.target.value)} placeholder="Optional" /></Field>
             {(counters.data?.items.length ?? 0) > 1 && (

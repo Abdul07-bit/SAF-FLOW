@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { shopUpi } from "../payments/shop-upi";
 import { assertPublicLinkFresh } from "../core/public-links";
 import QRCode from "qrcode";
 import type { DineMovementType, Prisma } from "@prisma/client";
@@ -496,7 +497,7 @@ route({
   query: z.object({ phone: z.string().max(20).optional() }),
   handler: async (ctx) => {
     const o = await loadOrder(ctx, ctx.params.id);
-    if (o.status !== "PAID") throw conflict("Settle the bill before sharing the invoice.");
+    if (o.status === "CANCELLED") throw conflict("This order was cancelled.");
     const business = await ctx.db.business.findUniqueOrThrow({ where: { tenantId: ctx.tenantId } });
     const settings = await getProductSettings(ctx.db, ctx.tenantId, "dine");
     return invoiceLinks({ ...o, customerPhone: ctx.query.phone || o.customerPhone }, settings.restaurantName || business.name);
@@ -969,16 +970,19 @@ route({
 });
 
 route({
-  method: "GET", path: "/public/invoice/dine/:token", tag: "public", summary: "Printable restaurant invoice",
+  method: "GET", path: "/public/invoice/dine/:token", tag: "public", summary: "Printable restaurant bill / invoice (unpaid bills carry the restaurant's UPI QR)",
   auth: { public: true }, rateLimit: { limit: 60, windowMs: 60_000 },
   handler: async (ctx) => {
     const { order, business, settings } = await publicOrder(ctx.params.token);
-    if (order.status !== "PAID") throw notFound("Invoice");
+    if (order.status === "CANCELLED") throw notFound("Invoice");
+    const paid = order.status === "PAID";
+    const sellerName = settings.restaurantName || business.name;
     return {
-      kind: "dine",
+      kind: "dine", isPaid: paid,
+      pay: paid ? null : await shopUpi(business, order.total, `Order ${order.orderNo}`, sellerName),
       seller: { name: settings.restaurantName || business.name, address: [business.address, business.city, business.state, business.pincode].filter(Boolean).join(", "), phone: business.phone, gstin: settings.gstin || business.gstin, logoUrl: business.logoUrl },
-      invoiceNo: order.invoiceNo, date: order.paidAt, customer: { name: order.customerName, phone: order.customerPhone },
-      meta: [order.table ? `Table ${order.table.name}` : order.type.replace("_", " "), `Order #${order.orderNo}`, `Paid by ${order.paymentMethod}`],
+      invoiceNo: order.invoiceNo, date: order.paidAt ?? order.createdAt, customer: { name: order.customerName, phone: order.customerPhone },
+      meta: [order.table ? `Table ${order.table.name}` : order.type.replace("_", " "), `Order #${order.orderNo}`, ...(paid ? [`Paid by ${order.paymentMethod}`] : [])],
       lines: order.items.filter((i) => i.status !== "CANCELLED").map((i) => ({ name: i.name, qty: i.qty, rate: i.unitPrice, taxRate: i.taxRate, amount: i.unitPrice * i.qty })),
       subtotal: order.subtotal, discount: order.discount, tax: order.taxTotal, total: order.total, footer: settings.receiptFooter,
     };

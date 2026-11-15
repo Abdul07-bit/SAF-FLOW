@@ -340,6 +340,7 @@ export async function tenantHeader(db: Tx, tenantId: string) {
     id: t.id, code: t.code, status: t.status, name: t.business?.name ?? t.code,
     category: t.business?.category ?? null, logoUrl: fileUrl(t.business?.logoKey),
     phone: t.business?.phone ?? null, email: t.business?.email ?? null, address: t.business?.address ?? null,
+    upiId: t.business?.upiId ?? null, upiPayeeName: t.business?.upiPayeeName ?? null, upiQrUrl: fileUrl(t.business?.upiQrKey),
   };
 }
 

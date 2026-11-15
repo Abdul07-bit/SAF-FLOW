@@ -14,7 +14,7 @@ import {
 } from "../core/subscriptions";
 import { addProductToTenant, businessProfileSchema, createBusiness, newBusinessSchema, paymentMethodSchema, productSelectionSchema } from "../core/tenancy";
 import { getPlatformSettings, platformSettingsSchema, savePlatformSettings } from "../core/settings";
-import { fileUrl, saveImage } from "../core/storage";
+import { fileUrl, saveImage, storage } from "../core/storage";
 import { notify } from "../core/notify";
 import { approveReceipt, rejectReceipt } from "../payments/upi";
 
@@ -199,7 +199,7 @@ route({
     ]);
     return {
       id: t.id, code: t.code, status: t.status, suspendedReason: t.suspendedReason, createdAt: t.createdAt,
-      business: t.business ? { ...t.business, logoUrl: fileUrl(t.business.logoKey) } : null,
+      business: t.business ? { ...t.business, logoUrl: fileUrl(t.business.logoKey), upiQrUrl: fileUrl(t.business.upiQrKey) } : null,
       branches: t.branches,
       subscriptions: t.subscriptions.map((s) => ({
         ...summarize(s), productCode: s.productCode, setupFee: s.setupFee, autoRenew: s.autoRenew,
@@ -222,7 +222,7 @@ route({
 });
 
 route({
-  method: "PATCH", path: "/admin/businesses/:id", tag: "admin", summary: "Edit business profile", auth: { platform: "platform.business.update", target: "business" },
+  method: "PATCH", path: "/admin/businesses/:id", tag: "admin", summary: "Edit business profile (incl. its UPI payment details)", auth: { platform: "platform.business.update", target: "business" }, stepUp: true,
   body: businessProfileSchema.partial(),
   handler: async ({ db, params, body, audit }) => {
     const t = await db.tenant.findUnique({ where: { id: params.id } });
@@ -282,6 +282,34 @@ route({
     await db.business.update({ where: { tenantId: t.id }, data: { logoKey: key } });
     await audit("admin.business.logo", { type: "tenant", id: t.id, tenantId: t.id });
     return { logoUrl: fileUrl(key) };
+  },
+});
+
+route({
+  method: "POST", path: "/admin/businesses/:id/upi-qr", tag: "admin", summary: "Upload the business's UPI QR image (customer payments)",
+  auth: { platform: "platform.business.update", target: "business" }, multipart: true, stepUp: true,
+  rateLimit: { limit: 20, windowMs: 60 * 60_000, by: "user" },
+  handler: async ({ db, params, form, audit }) => {
+    const t = await db.tenant.findUnique({ where: { id: params.id }, include: { business: { select: { upiQrKey: true } } } });
+    if (!t) throw notFound("Business");
+    const key = await saveImage(t.id, "upiqr", form!.get("file") as File | null);
+    await db.business.update({ where: { tenantId: t.id }, data: { upiQrKey: key } });
+    if (t.business?.upiQrKey) await storage().remove(t.business.upiQrKey);
+    await audit("admin.business.upi_qr", { type: "tenant", id: t.id, tenantId: t.id });
+    return { upiQrUrl: fileUrl(key) };
+  },
+});
+
+route({
+  method: "DELETE", path: "/admin/businesses/:id/upi-qr", tag: "admin", summary: "Remove the business's UPI QR image",
+  auth: { platform: "platform.business.update", target: "business" }, stepUp: true,
+  handler: async ({ db, params, audit }) => {
+    const t = await db.tenant.findUnique({ where: { id: params.id }, include: { business: { select: { upiQrKey: true } } } });
+    if (!t) throw notFound("Business");
+    await db.business.update({ where: { tenantId: t.id }, data: { upiQrKey: null } });
+    if (t.business?.upiQrKey) await storage().remove(t.business.upiQrKey);
+    await audit("admin.business.upi_qr_removed", { type: "tenant", id: t.id, tenantId: t.id });
+    return { ok: true };
   },
 });
 

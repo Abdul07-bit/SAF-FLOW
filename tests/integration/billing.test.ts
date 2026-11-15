@@ -81,6 +81,9 @@ describe("subscriptions & billing", () => {
     const open = (await api("GET", `/admin/invoices?tenantId=${biz.tenantId}&status=ISSUED`, { cookie: biz.admin })).body.items;
     expect(open).toHaveLength(1);
     const inv = open[0];
+    // UTRs are unique across the whole database: vary them per run.
+    const run = String(Date.now()).slice(-6);
+    const utr = (n: number) => `43${run}${String(n).padStart(4, "0")}`;
 
     // Payment details: SAF's UPI ID, the amount due and a QR encoding the upi://pay link.
     const upi = await api("GET", `/bill/billing/invoices/${inv.id}/upi`, { cookie: biz.manager });
@@ -91,23 +94,23 @@ describe("subscriptions & billing", () => {
 
     // Bad input is refused before anything is stored.
     expectError(await api("POST", `/bill/billing/invoices/${inv.id}/receipt`, { cookie: biz.manager, body: receiptForm("12") }), 400);
-    expectError(await api("POST", `/bill/billing/invoices/${inv.id}/receipt`, { cookie: biz.manager, body: receiptForm("431245678901", Buffer.from("not an image")) }), 400);
+    expectError(await api("POST", `/bill/billing/invoices/${inv.id}/receipt`, { cookie: biz.manager, body: receiptForm(utr(1), Buffer.from("not an image")) }), 400);
     // Another business cannot pay (or see) this invoice.
     const other = await createBusiness([{ productCode: "bill", tier: "BASIC" }]);
     expectError(await api("GET", `/bill/billing/invoices/${inv.id}/upi`, { cookie: other.manager }), 404);
-    expectError(await api("POST", `/bill/billing/invoices/${inv.id}/receipt`, { cookie: other.manager, body: receiptForm("431245678901") }), 404);
+    expectError(await api("POST", `/bill/billing/invoices/${inv.id}/receipt`, { cookie: other.manager, body: receiptForm(utr(1)) }), 404);
 
     // First receipt: rejected by SAF.
-    const r1 = await api("POST", `/bill/billing/invoices/${inv.id}/receipt`, { cookie: biz.manager, body: receiptForm("431245678901") });
+    const r1 = await api("POST", `/bill/billing/invoices/${inv.id}/receipt`, { cookie: biz.manager, body: receiptForm(utr(1)) });
     expect(r1.status, JSON.stringify(r1.body)).toBe(201);
     expect(r1.body).toMatchObject({ status: "PENDING", amount: inv.total });
     // Only one receipt can wait per invoice.
-    expectError(await api("POST", `/bill/billing/invoices/${inv.id}/receipt`, { cookie: biz.manager, body: receiptForm("431245678902") }), 409);
+    expectError(await api("POST", `/bill/billing/invoices/${inv.id}/receipt`, { cookie: biz.manager, body: receiptForm(utr(2)) }), 409);
 
     const queue = await api("GET", `/admin/payments?receipts=1&status=PENDING&tenantId=${biz.tenantId}`, { cookie: biz.admin });
     expect(queue.body.items).toHaveLength(1);
     const pending = queue.body.items[0];
-    expect(pending).toMatchObject({ reference: "431245678901", method: "UPI", amount: inv.total });
+    expect(pending).toMatchObject({ reference: utr(1), method: "UPI", amount: inv.total });
     expect(pending.receiptUrl).toMatch(/\/api\/files\/t\/.+\/receipts\/.+\.png\?exp=\d+&sig=/);
     // Receipts are private: the bare file URL is refused.
     expectError(await api("GET", pending.receiptUrl.replace(/^\/api/, "").split("?")[0]), 404);
@@ -120,7 +123,7 @@ describe("subscriptions & billing", () => {
     expect(mine).toMatchObject({ status: "ISSUED", paidAmount: 0, receipt: { status: "FAILED", reviewNote: "Payment not received in the bank" } });
 
     // Second receipt: approved -> invoice paid, subscription renewed, business notified.
-    const r2 = await api("POST", `/bill/billing/invoices/${inv.id}/receipt`, { cookie: biz.manager, body: receiptForm("431245678903") });
+    const r2 = await api("POST", `/bill/billing/invoices/${inv.id}/receipt`, { cookie: biz.manager, body: receiptForm(utr(3)) });
     expect(r2.status, JSON.stringify(r2.body)).toBe(201);
     mine = (await api("GET", "/bill/subscription", { cookie: biz.manager })).body.invoices.find((i: any) => i.id === inv.id);
     expect(mine.receipt.status).toBe("PENDING");
@@ -139,7 +142,7 @@ describe("subscriptions & billing", () => {
     const succeeded = await withTenant(biz.tenantId, (db) => db.payment.count({ where: { invoiceId: inv.id, status: "SUCCEEDED" } }));
     expect(succeeded).toBe(1);
     // Paid invoices take no more receipts; a used UTR cannot be reused elsewhere.
-    expectError(await api("POST", `/bill/billing/invoices/${inv.id}/receipt`, { cookie: biz.manager, body: receiptForm("431245678904") }), 409);
+    expectError(await api("POST", `/bill/billing/invoices/${inv.id}/receipt`, { cookie: biz.manager, body: receiptForm(utr(4)) }), 409);
     expectError(await api("GET", `/bill/billing/invoices/${inv.id}/upi`, { cookie: biz.manager }), 409);
   });
 

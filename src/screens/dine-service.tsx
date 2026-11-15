@@ -8,6 +8,7 @@ import { api, qs, useApi } from "@/lib/client";
 import { humanize } from "@/shared/fields";
 import { BarList, ChartCard, ColumnChart, fmtCompactINR, KpiRow, StatTile } from "@/components/charts";
 import { useProduct } from "@/components/product-context";
+import { ShopUpiQr } from "@/components/shop-upi";
 import { Badge, Button, Card, DataTable, Empty, Field, Input, Loadable, Modal, Notice, PageHeader, Select, StatusBadge, toast, useAction, cx } from "@/components/ui";
 
 export const TENDERS = ["CASH", "UPI", "CARD", "WALLET", "CREDIT", "OTHER"] as const;
@@ -196,6 +197,12 @@ export function SettleForm({ order, onSettled }: { order: any; onSettled: (r: an
         {p.can("billing.discount") && <Field label="Discount (Rs)"><Input type="number" min="0" step="0.01" value={discount} onChange={(e) => setDiscount(e.target.value)} /></Field>}
         <Field label="Customer phone" className="col-span-2"><Input type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="For the WhatsApp invoice" /></Field>
       </div>
+      {method === "UPI" && <ShopUpiQr base={p.base} amount={t.total} note={`Order ${order.orderNo}`} />}
+      {order.publicToken && (
+        <a href={`/invoice/dine/${order.publicToken}`} target="_blank" rel="noreferrer" className="flex items-center justify-center gap-1.5 text-sm font-medium text-brand underline-offset-2 hover:underline">
+          <ExternalLink className="h-4 w-4" /> Print / share bill (with UPI QR)
+        </a>
+      )}
       <Button variant="primary" size="lg" className="w-full" loading={busy} disabled={!live.length}
         onClick={() => run(async () => onSettled(await api(`/dine/orders/${order.id}/settle`, { body: { paymentMethod: method, discount: rupeesToPaise(discount || 0), customerPhone: phone || undefined } })))}>
         Settle {formatINR(t.total)}
@@ -328,6 +335,7 @@ export function DinePos() {
               {p.can("billing.discount") && <Field label="Discount (Rs)"><Input type="number" min="0" step="0.01" value={discount} onChange={(e) => setDiscount(e.target.value)} /></Field>}
             </div>
           )}
+          {canSettle && method === "UPI" && cart.lines.length > 0 && <div className="mt-3"><ShopUpiQr base={p.base} amount={t.total} /></div>}
           <div className="mt-3 space-y-2">
             {canSettle && (
               <Button variant="primary" size="lg" className="w-full" loading={busy} disabled={!cart.lines.length || (type === "DINE_IN" && !tableId)}

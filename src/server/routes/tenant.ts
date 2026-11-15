@@ -16,6 +16,7 @@ import { businessProfileSchema } from "../core/tenancy";
 import { writeAudit } from "../core/audit";
 import { invoiceDue, submitReceipt, upiPayLink, UTR } from "../payments/upi";
 import QRCode from "qrcode";
+import { shopUpi } from "../payments/shop-upi";
 import { branches } from "@/shared/resources";
 
 // ---------------------------------------------------------------------------
@@ -313,6 +314,8 @@ route({
     if (!ctx.user.isTenantOwner) throw forbidden("PERMISSION_DENIED", "Only the business owner can edit the business profile.");
     const data = Object.fromEntries(Object.entries(ctx.body).map(([k, v]) => [k, v === "" ? null : v]));
     await ctx.db.business.update({ where: { tenantId: ctx.tenantId }, data });
+    if ("upiId" in ctx.body || "upiPayeeName" in ctx.body)
+      await ctx.audit("business.upi_changed", { type: "tenant", id: ctx.tenantId }, { upiId: ctx.body.upiId ?? null });
     return { ok: true };
   },
 });
@@ -327,6 +330,53 @@ route({
     return { logoUrl: fileUrl(key) };
   },
 });
+
+/**
+ * Where customers' money goes: owner only, with a fresh sign-in, and audited.
+ * A staff member must never be able to swap in their own UPI QR.
+ */
+route({
+  method: "POST", path: "/:product/business/upi-qr", tag: "settings", summary: "Upload the business's UPI QR image (customer payments)",
+  auth: { product: ":product", permission: "settings.manage" }, multipart: true, stepUp: true,
+  rateLimit: { limit: 20, windowMs: 60 * 60_000, by: "user" },
+  handler: async (ctx) => {
+    if (!ctx.user.isTenantOwner) throw forbidden("PERMISSION_DENIED", "Only the business owner can change payment details.");
+    const key = await saveImage(ctx.tenantId, "upiqr", ctx.form!.get("file") as File | null);
+    const old = await ctx.db.business.findUnique({ where: { tenantId: ctx.tenantId }, select: { upiQrKey: true } });
+    await ctx.db.business.update({ where: { tenantId: ctx.tenantId }, data: { upiQrKey: key } });
+    if (old?.upiQrKey) await storage().remove(old.upiQrKey);
+    await ctx.audit("business.upi_qr_changed", { type: "tenant", id: ctx.tenantId });
+    return { upiQrUrl: fileUrl(key) };
+  },
+});
+
+route({
+  method: "DELETE", path: "/:product/business/upi-qr", tag: "settings", summary: "Remove the business's UPI QR image",
+  auth: { product: ":product", permission: "settings.manage" }, stepUp: true,
+  handler: async (ctx) => {
+    if (!ctx.user.isTenantOwner) throw forbidden("PERMISSION_DENIED", "Only the business owner can change payment details.");
+    const old = await ctx.db.business.findUnique({ where: { tenantId: ctx.tenantId }, select: { upiQrKey: true } });
+    await ctx.db.business.update({ where: { tenantId: ctx.tenantId }, data: { upiQrKey: null } });
+    if (old?.upiQrKey) await storage().remove(old.upiQrKey);
+    await ctx.audit("business.upi_qr_removed", { type: "tenant", id: ctx.tenantId });
+    return { ok: true };
+  },
+});
+
+/** Cashiers of each product: who may show the customer the payment QR. */
+const UPI_QR_PERMISSION = { dine: "billing.settle", bill: "pos.use", stay: "billing.manage" } as const;
+for (const product of PRODUCT_CODES) {
+  route({
+    method: "GET", path: `/${product}/payments/upi`, tag: "billing",
+    summary: "The business's UPI QR for a bill amount (shown to the customer on the cashier screen)",
+    auth: { product, permission: UPI_QR_PERMISSION[product] },
+    query: z.object({ amount: z.coerce.number().int().min(100).max(1_000_000_000), note: z.string().max(40).optional() }),
+    handler: async (ctx) => {
+      const b = await ctx.db.business.findUniqueOrThrow({ where: { tenantId: ctx.tenantId }, select: { name: true, upiId: true, upiPayeeName: true, upiQrKey: true } });
+      return { upi: await shopUpi(b, ctx.query.amount, ctx.query.note || b.name) };
+    },
+  });
+}
 
 // ---------------------------------------------------------------------------
 // Subscription & SAF billing (manager view)

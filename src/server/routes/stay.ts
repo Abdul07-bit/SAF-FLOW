@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { shopUpi } from "../payments/shop-upi";
 import { assertPublicLinkFresh } from "../core/public-links";
 import type { Prisma } from "@prisma/client";
 import {
@@ -924,8 +925,10 @@ route({
       const business = await db.business.findUniqueOrThrow({ where: { tenantId: ref.tenantId } });
       const settings = await getProductSettings(db, ref.tenantId, "stay");
       const f = folio(r);
+      const sellerName = settings.hotelName || business.name;
       return {
-        kind: "stay",
+        kind: "stay", isPaid: f.balance <= 0,
+        pay: f.balance > 0 ? await shopUpi(business, f.balance, r.invoiceNo ?? `Reservation ${r.reservationNo}`, sellerName) : null,
         seller: { name: settings.hotelName || business.name, address: [business.address, business.city, business.state, business.pincode].filter(Boolean).join(", "), phone: business.phone, gstin: settings.gstin || business.gstin, logoUrl: fileUrl(business.logoKey) },
         invoiceNo: r.invoiceNo, date: r.checkedOutAt,
         customer: { name: r.guest.fullName, phone: r.guest.phone, address: r.guest.address, gstin: r.guest.gstin, company: r.guest.company },

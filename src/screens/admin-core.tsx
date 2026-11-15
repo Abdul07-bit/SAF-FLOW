@@ -166,8 +166,29 @@ export function AdminBusinesses() {
 interface Plan { id: string; productCode: ProductCode; tier: "BASIC" | "GROWTH"; name: string; monthlyPrice: number; annualPrice: number; setupFee: number; graceDays: number; isActive: boolean }
 interface Selection { on: boolean; tier: "BASIC" | "GROWTH"; billingCycle: "MONTHLY" | "ANNUAL"; setupFee: string; startDate: string; expiryDate: string; markSetupPaid: boolean; markSubscriptionPaid: boolean }
 
-const EMPTY_PROFILE = { name: "", category: "RESTAURANT", ownerName: "", phone: "", email: "", address: "", city: "", state: "", pincode: "", gstin: "" };
+const EMPTY_PROFILE = { name: "", category: "RESTAURANT", ownerName: "", phone: "", email: "", address: "", city: "", state: "", pincode: "", gstin: "", upiId: "", upiPayeeName: "" };
 const defaultExpiry = (start: string, cycle: string) => (start ? addDays(addMonths(start, cycle === "ANNUAL" ? 12 : 1), -1) : "");
+
+/** Picks a PNG/JPEG before the business exists; uploaded right after it is created. */
+function ImagePick({ file, onChange, label }: { file: File | null; onChange: (f: File | null) => void; label: string }) {
+  const [url, setUrl] = useState<string | null>(null);
+  useEffect(() => {
+    if (!file) { setUrl(null); return; }
+    const u = URL.createObjectURL(file);
+    setUrl(u);
+    return () => URL.revokeObjectURL(u);
+  }, [file]);
+  return (
+    <div className="flex items-center gap-3">
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      {url ? <img src={url} alt={`Selected ${label}`} className="h-14 w-14 rounded-lg border border-slate-200 object-contain" /> : <span className="flex h-14 w-14 items-center justify-center rounded-lg border border-dashed border-slate-300 text-[10px] text-slate-400">None</span>}
+      <input type="file" accept="image/png,image/jpeg" aria-label={`Choose ${label}`}
+        onChange={(e) => { const f = e.target.files?.[0] ?? null; if (f && f.size > 2 * 1024 * 1024) { toast("Image must be 2 MB or smaller", "bad"); e.target.value = ""; return; } onChange(f); }}
+        className="block w-full text-sm text-slate-700 file:mr-3 file:rounded-md file:border-0 file:bg-slate-100 file:px-3 file:py-1.5 file:text-sm file:font-medium" />
+      {file && <Button size="sm" variant="ghost" onClick={() => onChange(null)}>Clear</Button>}
+    </div>
+  );
+}
 
 export function AdminNewBusiness() {
   const defaults = useApi<{ today: string; plans: Plan[] }>("/admin/defaults");
@@ -184,6 +205,9 @@ export function AdminNewBusiness() {
   const [branches, setBranches] = useState<{ name: string; code: string; address: string; phone: string }[]>([]);
   const [owner, setOwner] = useState<{ method: "invite" | "login_id"; delivery: "email" | "link" }>({ method: "invite", delivery: "email" });
   const [assignIds, setAssignIds] = useState<string[]>([]);
+  const [logo, setLogo] = useState<File | null>(null);
+  const [upiQr, setUpiQr] = useState<File | null>(null);
+  const [uploadNote, setUploadNote] = useState<string | null>(null);
   const team = useApi<{ items: { id: string; fullName: string; isActive: boolean; invitation: { status: string } | null; role: { name: string; allTenants: boolean } | null }[] }>("/admin/team");
   // Active members and members whose invitation is still pending (invite, then assign).
   const assignable = (team.data?.items ?? []).filter((m) => (m.isActive || m.invitation?.status === "PENDING") && m.role && !m.role.allTenants);
@@ -258,6 +282,16 @@ export function AdminNewBusiness() {
           assignStaffIds: assignIds,
         },
       });
+      // The business exists now; images go up separately. A failed upload is
+      // reported but never undoes the business (it can be retried from its page).
+      const failed: string[] = [];
+      for (const [file, path, label] of [[logo, "logo", "logo"], [upiQr, "upi-qr", "UPI QR"]] as const) {
+        if (!file) continue;
+        const form = new FormData();
+        form.append("file", file);
+        try { await api(`/admin/businesses/${r.tenantId}/${path}`, { form }); } catch (e) { failed.push(`${label}: ${errorMessage(e)}`); }
+      }
+      setUploadNote(failed.length ? failed.join(" ") : null);
       setCreated({ ...r, name: profile.name });
       window.scrollTo({ top: 0 });
     } catch (err) {
@@ -272,6 +306,7 @@ export function AdminNewBusiness() {
       <>
         <PageHeader title="Business created" description={`${created.name} (${created.code}) is ready.`} />
         <div className="max-w-xl space-y-4">
+          {uploadNote && <Notice tone="warn" title="Business created, but an image was not saved">{uploadNote} Upload it again from the business page.</Notice>}
           {created.temporaryPassword && <Credentials username={created.managerUsername} password={created.temporaryPassword} title="Owner login - hand these to the owner" />}
           {created.invitation?.delivery === "email" && (
             <Notice tone="good" title="Invitation sent to the owner">{created.managerUsername} will receive an email to set their password and open the workspace.</Notice>
@@ -286,7 +321,7 @@ export function AdminNewBusiness() {
           <p className="text-sm text-slate-600">The owner account opens every product activated for this business. The owner then adds staff from Team &gt; Staff logins, by email invitation or with login IDs like <span className="font-mono">{created.code}@name</span>.</p>
           <div className="flex flex-wrap gap-2">
             <Link href={`/admin/businesses/${created.tenantId}`}><Button variant="primary">Open business</Button></Link>
-            <Button onClick={() => { setCreated(null); setProfile(EMPTY_PROFILE); setCode(""); setSel(null); setBranches([]); setAssignIds([]); void defaults.reload(); }}>Add another business</Button>
+            <Button onClick={() => { setCreated(null); setProfile(EMPTY_PROFILE); setCode(""); setSel(null); setBranches([]); setAssignIds([]); setLogo(null); setUpiQr(null); setUploadNote(null); void defaults.reload(); }}>Add another business</Button>
           </div>
         </div>
       </>
@@ -334,11 +369,24 @@ export function AdminNewBusiness() {
                   <Field label="Business code" required help="2-12 letters/digits, starts with a letter. It prefixes every login ID and cannot be changed later.">
                     <Input required maxLength={12} className="font-mono uppercase" value={code} onChange={(e) => setCode(e.target.value.replace(/[^a-zA-Z0-9]/g, ""))} placeholder="SGV" />
                   </Field>
+                  <Field label="Logo" help="Shown on the QR menu, bills and staff ID cards. PNG or JPEG, up to 2 MB.">
+                    <ImagePick file={logo} onChange={setLogo} label="business logo" />
+                  </Field>
                   <div className="self-center text-sm" aria-live="polite">
                     {dcode.length >= 2 && avail.data && (avail.data.available
                       ? <span className="flex items-center gap-1.5 text-emerald-800"><CheckCircle2 className="h-4 w-4" aria-hidden /> Available.{owner.method === "login_id" && <> Owner login: <span className="font-mono font-semibold">{avail.data.managerUsername}</span></>}</span>
                       : <span className="flex items-center gap-1.5 text-red-700"><XCircle className="h-4 w-4" aria-hidden /> {avail.data.reason}</span>)}
                   </div>
+                </div>
+              </Card>
+
+              <Card title="Customer payments (UPI)" subtitle="Optional. The business's own UPI: its customers scan a QR with the bill amount at the counter and on unpaid bills.">
+                <div className="grid gap-x-4 gap-y-3 sm:grid-cols-2">
+                  <Field label="UPI ID" help="e.g. shopname@okaxis"><Input maxLength={320} autoComplete="off" value={profile.upiId} onChange={set("upiId")} placeholder="shopname@okaxis" /></Field>
+                  <Field label="Name shown in the UPI app"><Input maxLength={60} value={profile.upiPayeeName} onChange={set("upiPayeeName")} placeholder={profile.name} /></Field>
+                  <Field label="UPI QR image (optional)" className="sm:col-span-2" help="Only used when no UPI ID is entered.">
+                    <ImagePick file={upiQr} onChange={setUpiQr} label="UPI QR image" />
+                  </Field>
                 </div>
               </Card>
 
@@ -491,6 +539,8 @@ const PROFILE_FIELDS = {
   city: f.text("City", { max: 80 }),
   state: f.text("State", { max: 80 }),
   pincode: f.text("PIN code", { max: 10 }),
+  upiId: f.text("UPI ID (customer payments)", { max: 320 }),
+  upiPayeeName: f.text("Name shown in the UPI app", { max: 60 }),
 };
 
 export function AdminBusinessDetail({ id }: { id: string }) {
@@ -512,6 +562,15 @@ export function AdminBusinessDetail({ id }: { id: string }) {
     const form = new FormData();
     form.append("file", picked);
     await run(async () => { await api(`/admin/businesses/${id}/logo`, { form }); await b.reload(); }, "Logo updated");
+  };
+  const qrFile = useRef<HTMLInputElement>(null);
+  const uploadQr = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const picked = e.target.files?.[0];
+    e.target.value = "";
+    if (!picked) return;
+    const form = new FormData();
+    form.append("file", picked);
+    await run(async () => { await api(`/admin/businesses/${id}/upi-qr`, { form }); await b.reload(); }, "UPI QR saved");
   };
 
   return (
@@ -560,6 +619,21 @@ export function AdminBusinessDetail({ id }: { id: string }) {
                         {biz.logoUrl ? <img src={biz.logoUrl} alt="Business logo" className="h-16 w-16 rounded-lg border border-slate-200 object-contain" /> : <span className="flex h-16 w-16 items-center justify-center rounded-lg border border-dashed border-slate-300 text-xs text-slate-400">No logo</span>}
                         <input ref={file} type="file" accept="image/png,image/jpeg" className="hidden" onChange={upload} />
                         <Button loading={busy} onClick={() => file.current?.click()}><ImageUp className="h-4 w-4" /> Upload logo</Button>
+                      </div>
+                    </Card>
+                    <Card title="Customer payments (UPI)" subtitle="Change the UPI ID under Edit. The QR image is used only without a UPI ID.">
+                      <div className="flex items-center gap-4">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        {biz.upiQrUrl ? <img src={biz.upiQrUrl} alt="UPI QR" className="h-16 w-16 rounded-lg border border-slate-200 object-contain" /> : <span className="flex h-16 w-16 items-center justify-center rounded-lg border border-dashed border-slate-300 text-xs text-slate-400">No QR</span>}
+                        <div className="min-w-0 text-sm">
+                          <p className="truncate font-mono text-slate-800">{biz.upiId ?? "No UPI ID"}</p>
+                          {biz.upiPayeeName && <p className="text-xs text-slate-500">{biz.upiPayeeName}</p>}
+                          <input ref={qrFile} type="file" accept="image/png,image/jpeg" className="hidden" onChange={uploadQr} />
+                          <div className="mt-2 flex gap-2">
+                            <Button size="sm" loading={busy} onClick={() => qrFile.current?.click()}><ImageUp className="h-4 w-4" /> QR image</Button>
+                            {biz.upiQrUrl && <Button size="sm" variant="ghost" loading={busy} onClick={() => run(async () => { await api(`/admin/businesses/${id}/upi-qr`, { method: "DELETE" }); await b.reload(); }, "QR image removed")}>Remove</Button>}
+                          </div>
+                        </div>
                       </div>
                     </Card>
                     <Card title="Products"><ProductChips products={d.subscriptions.map((s: any) => ({ code: s.productCode, tier: s.tier, state: s.state }))} /></Card>

@@ -74,8 +74,9 @@ function limiterFor(store: Redis, limit: number, windowMs: number): Ratelimit {
       prefix: "saf:rl",
       // Requests a blocked key makes are answered from memory without a Redis call.
       ephemeralCache: new Map(),
-      // Never hold a request for long: on timeout the request is allowed.
-      timeout: 1500,
+      // Never hold a request for long: on timeout the request is allowed. A
+      // healthy store in the same region answers in a few milliseconds.
+      timeout: 400,
       analytics: false,
     });
     limiters.set(id, rl);

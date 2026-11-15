@@ -668,6 +668,23 @@
                   "gstin": {
                     "type": "string",
                     "maxLength": 20
+                  },
+                  "upiId": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 320,
+                        "pattern": "^[A-Za-z0-9._-]{2,256}@[A-Za-z][A-Za-z0-9.-]{1,63}$"
+                      },
+                      {
+                        "type": "string",
+                        "const": ""
+                      }
+                    ]
+                  },
+                  "upiPayeeName": {
+                    "type": "string",
+                    "maxLength": 60
                   }
                 }
               }
@@ -679,6 +696,106 @@
     "/api/{product}/business/logo": {
       "post": {
         "summary": "Upload business logo (used on invoices and ID cards)",
+        "description": "**Authorization:** Tenant user of the product in the URL with a usable subscription; role permission: settings.manage.\n\nMutations require header `x-saf-request: 1` (CSRF guard).",
+        "tags": [
+          "settings"
+        ],
+        "parameters": [
+          {
+            "name": "product",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "402": {
+            "description": "Subscription expired"
+          },
+          "403": {
+            "description": "Not permitted (plan feature, role permission, tenant suspended...)"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        },
+        "x-saf-auth": {
+          "product": ":product",
+          "permission": "settings.manage"
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "file": {
+                    "type": "string",
+                    "format": "binary"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/{product}/business/upi-qr": {
+      "delete": {
+        "summary": "Remove the business's UPI QR image",
+        "description": "**Authorization:** Tenant user of the product in the URL with a usable subscription; role permission: settings.manage.\n\nMutations require header `x-saf-request: 1` (CSRF guard).",
+        "tags": [
+          "settings"
+        ],
+        "parameters": [
+          {
+            "name": "product",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "402": {
+            "description": "Subscription expired"
+          },
+          "403": {
+            "description": "Not permitted (plan feature, role permission, tenant suspended...)"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        },
+        "x-saf-auth": {
+          "product": ":product",
+          "permission": "settings.manage"
+        }
+      },
+      "post": {
+        "summary": "Upload the business's UPI QR image (customer payments)",
         "description": "**Authorization:** Tenant user of the product in the URL with a usable subscription; role permission: settings.manage.\n\nMutations require header `x-saf-request: 1` (CSRF guard).",
         "tags": [
           "settings"
@@ -4196,6 +4313,23 @@
                     "type": "string",
                     "maxLength": 20
                   },
+                  "upiId": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 320,
+                        "pattern": "^[A-Za-z0-9._-]{2,256}@[A-Za-z][A-Za-z0-9.-]{1,63}$"
+                      },
+                      {
+                        "type": "string",
+                        "const": ""
+                      }
+                    ]
+                  },
+                  "upiPayeeName": {
+                    "type": "string",
+                    "maxLength": 60
+                  },
                   "code": {
                     "type": "string"
                   },
@@ -4405,7 +4539,7 @@
         }
       },
       "patch": {
-        "summary": "Edit business profile",
+        "summary": "Edit business profile (incl. its UPI payment details)",
         "description": "**Authorization:** SAF Super Admin only.\n\nMutations require header `x-saf-request: 1` (CSRF guard).",
         "tags": [
           "admin"
@@ -4518,6 +4652,23 @@
                   "gstin": {
                     "type": "string",
                     "maxLength": 20
+                  },
+                  "upiId": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 320,
+                        "pattern": "^[A-Za-z0-9._-]{2,256}@[A-Za-z][A-Za-z0-9.-]{1,63}$"
+                      },
+                      {
+                        "type": "string",
+                        "const": ""
+                      }
+                    ]
+                  },
+                  "upiPayeeName": {
+                    "type": "string",
+                    "maxLength": 60
                   }
                 }
               }
@@ -4945,6 +5096,106 @@
         "x-saf-auth": {
           "platform": "platform.business.read",
           "target": "business"
+        }
+      }
+    },
+    "/api/admin/businesses/{id}/upi-qr": {
+      "delete": {
+        "summary": "Remove the business's UPI QR image",
+        "description": "**Authorization:** SAF Super Admin only.\n\nMutations require header `x-saf-request: 1` (CSRF guard).",
+        "tags": [
+          "admin"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "402": {
+            "description": "Subscription expired"
+          },
+          "403": {
+            "description": "Not permitted (plan feature, role permission, tenant suspended...)"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        },
+        "x-saf-auth": {
+          "platform": "platform.business.update",
+          "target": "business"
+        }
+      },
+      "post": {
+        "summary": "Upload the business's UPI QR image (customer payments)",
+        "description": "**Authorization:** SAF Super Admin only.\n\nMutations require header `x-saf-request: 1` (CSRF guard).",
+        "tags": [
+          "admin"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "402": {
+            "description": "Subscription expired"
+          },
+          "403": {
+            "description": "Not permitted (plan feature, role permission, tenant suspended...)"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        },
+        "x-saf-auth": {
+          "platform": "platform.business.update",
+          "target": "business"
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "file": {
+                    "type": "string",
+                    "format": "binary"
+                  }
+                }
+              }
+            }
+          }
         }
       }
     },
@@ -10126,6 +10377,60 @@
         }
       }
     },
+    "/api/bill/payments/upi": {
+      "get": {
+        "summary": "The business's UPI QR for a bill amount (shown to the customer on the cashier screen)",
+        "description": "**Authorization:** Tenant user of bill with a usable subscription; role permission: pos.use.",
+        "tags": [
+          "billing"
+        ],
+        "parameters": [
+          {
+            "name": "amount",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 100,
+              "maximum": 1000000000
+            }
+          },
+          {
+            "name": "note",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 40
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "402": {
+            "description": "Subscription expired"
+          },
+          "403": {
+            "description": "Not permitted (plan feature, role permission, tenant suspended...)"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        },
+        "x-saf-auth": {
+          "product": "bill",
+          "permission": "pos.use"
+        }
+      }
+    },
     "/api/bill/products": {
       "get": {
         "summary": "List products",
@@ -14415,6 +14720,60 @@
         }
       }
     },
+    "/api/dine/payments/upi": {
+      "get": {
+        "summary": "The business's UPI QR for a bill amount (shown to the customer on the cashier screen)",
+        "description": "**Authorization:** Tenant user of dine with a usable subscription; role permission: billing.settle.",
+        "tags": [
+          "billing"
+        ],
+        "parameters": [
+          {
+            "name": "amount",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 100,
+              "maximum": 1000000000
+            }
+          },
+          {
+            "name": "note",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 40
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "402": {
+            "description": "Subscription expired"
+          },
+          "403": {
+            "description": "Not permitted (plan feature, role permission, tenant suspended...)"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        },
+        "x-saf-auth": {
+          "product": "dine",
+          "permission": "billing.settle"
+        }
+      }
+    },
     "/api/dine/purchases": {
       "get": {
         "summary": "Purchase orders",
@@ -17154,7 +17513,7 @@
     },
     "/api/public/invoice/dine/{token}": {
       "get": {
-        "summary": "Printable restaurant invoice",
+        "summary": "Printable restaurant bill / invoice (unpaid bills carry the restaurant's UPI QR)",
         "description": "**Authorization:** Public (no session).",
         "tags": [
           "public"
@@ -19100,6 +19459,60 @@
               }
             }
           }
+        }
+      }
+    },
+    "/api/stay/payments/upi": {
+      "get": {
+        "summary": "The business's UPI QR for a bill amount (shown to the customer on the cashier screen)",
+        "description": "**Authorization:** Tenant user of stay with a usable subscription; role permission: billing.manage.",
+        "tags": [
+          "billing"
+        ],
+        "parameters": [
+          {
+            "name": "amount",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 100,
+              "maximum": 1000000000
+            }
+          },
+          {
+            "name": "note",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 40
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "402": {
+            "description": "Subscription expired"
+          },
+          "403": {
+            "description": "Not permitted (plan feature, role permission, tenant suspended...)"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        },
+        "x-saf-auth": {
+          "product": "stay",
+          "permission": "billing.manage"
         }
       }
     },

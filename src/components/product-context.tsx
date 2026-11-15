@@ -20,7 +20,10 @@ export interface SubscriptionInfo {
 
 export interface ProductData {
   product: { code: ProductCode; name: string; shortName: string; tagline: string };
-  tenant: { id: string; code: string; status: string; name: string; logoUrl: string | null; phone: string | null; email: string | null; address: string | null };
+  tenant: {
+    id: string; code: string; status: string; name: string; logoUrl: string | null; phone: string | null; email: string | null; address: string | null;
+    upiId: string | null; upiPayeeName: string | null; upiQrUrl: string | null;
+  };
   user: { id: string; username: string; fullName: string; isTenantOwner: boolean };
   role: { id: string; code: string; name: string; homeScreen: string } | null;
   subscription: SubscriptionInfo | null;

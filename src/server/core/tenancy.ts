@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { UPI_ID } from "./settings";
 import { BUSINESS_CATEGORIES, PRODUCT_CODES, type ProductCode } from "@/config/catalog";
 import { isISODate, todayIST } from "@/lib/dates";
 import type { Tx } from "../db";
@@ -36,6 +37,9 @@ export const businessProfileSchema = z.object({
   state: z.string().trim().max(80).optional(),
   pincode: z.string().trim().max(10).optional(),
   gstin: z.string().trim().max(20).optional(),
+  /** Business's own UPI ID: customers pay bills to it (QR with the amount). */
+  upiId: z.string().trim().max(320).regex(UPI_ID, "Enter a valid UPI ID, e.g. shopname@okaxis").optional().or(z.literal("")),
+  upiPayeeName: z.string().trim().max(60).optional(),
 });
 
 export const newBusinessSchema = businessProfileSchema.extend({
@@ -134,6 +138,7 @@ export async function createBusiness(db: Tx, input: NewBusinessInput, actor: { i
           name: input.name, category: input.category, ownerName: input.ownerName, phone: input.phone,
           email: input.email || null, address: input.address || null, city: input.city || null,
           state: input.state || null, pincode: input.pincode || null, gstin: input.gstin || null,
+          upiId: input.upiId || null, upiPayeeName: input.upiPayeeName || null,
         },
       },
       branches: { create: { name: "Main Branch", code: "MAIN", isMain: true, address: input.address || null, phone: input.phone } },
