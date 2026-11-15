@@ -278,12 +278,100 @@ function FeatureGroupRows({ group, rows, plans, busy, onToggle }: { group: strin
 // ---------------------------------------------------------------------------
 
 export function AdminPayments() {
-  const [tab, setTab] = useState<"payments" | "invoices">("payments");
+  const [tab, setTab] = useState<"verify" | "payments" | "invoices">("verify");
+  const waiting = useApi<{ total: number }>(`/admin/payments${qs({ status: "PENDING", receipts: "1", pageSize: 1 })}`, { refreshMs: 60_000 });
+  const n = waiting.data?.total ?? 0;
   return (
     <>
-      <PageHeader title="Payments" description="Payment history and SAF invoices across every business." />
-      <Tabs value={tab} onChange={setTab} tabs={[{ key: "payments", label: "Payment history" }, { key: "invoices", label: "Invoices" }]} />
-      {tab === "payments" ? <PaymentsTable /> : <InvoicesTable />}
+      <PageHeader title="Payments" description="UPI receipts to verify, payment history and SAF invoices across every business." />
+      <Tabs value={tab} onChange={setTab} tabs={[
+        { key: "verify", label: n ? `To verify (${n})` : "To verify" },
+        { key: "payments", label: "Payment history" },
+        { key: "invoices", label: "Invoices" },
+      ]} />
+      {tab === "verify" ? <ReceiptsToVerify onChanged={() => void waiting.reload()} /> : tab === "payments" ? <PaymentsTable /> : <InvoicesTable />}
+    </>
+  );
+}
+
+/** UPI receipts uploaded by businesses. Check the bank / UPI app statement, then approve or reject. */
+function ReceiptsToVerify({ onChanged }: { onChanged: () => void }) {
+  const [status, setStatus] = useState("PENDING");
+  const [page, setPage] = useState(1);
+  const [viewing, setViewing] = useState<any | null>(null);
+  const [rejecting, setRejecting] = useState<any | null>(null);
+  const [busy, run] = useAction();
+  useEffect(() => setPage(1), [status]);
+  const list = useApi<{ items: any[]; total: number }>(`/admin/payments${qs({ receipts: "1", status, page, pageSize: 50 })}`);
+  const done = async () => { setViewing(null); setRejecting(null); await list.reload(); onChanged(); };
+  const approve = (r: any) => {
+    if (!window.confirm(`Approve ${formatINR(r.amount)} from ${r.business ?? r.code} (UTR ${r.reference})?\n\nOnly approve after you see this amount in your bank or UPI app.`)) return;
+    void run(async () => { await api(`/admin/payments/${r.id}/approve`, { body: {} }); await done(); }, "Payment approved: invoice updated");
+  };
+  return (
+    <>
+      <div className="no-print mb-4 flex flex-wrap items-center gap-2">
+        <Select aria-label="Status" className="w-48" value={status} onChange={(e) => setStatus(e.target.value)}>
+          <option value="PENDING">Waiting for review</option><option value="SUCCEEDED">Approved</option><option value="FAILED">Rejected</option><option value="">All receipts</option>
+        </Select>
+        <p className="text-sm text-slate-600">Match the UTR and amount with your bank or UPI app before approving.</p>
+      </div>
+      <Card pad={false}>
+        <Loadable state={list}>
+          {(d) => (
+            <>
+              <DataTable
+                rows={d.items} rowKey={(r) => r.id} empty={<Empty title={status === "PENDING" ? "No receipts waiting" : "No receipts"} hint={status === "PENDING" ? "Receipts uploaded by businesses appear here." : undefined} />}
+                columns={[
+                  { key: "d", label: "Sent", render: (r) => fmtDate(r.createdAt) },
+                  { key: "b", label: "Business", render: (r) => <Link className={linkCls} href={`/admin/businesses/${r.tenantId}`}>{r.business ?? r.code}</Link> },
+                  { key: "i", label: "Invoice", render: (r) => r.invoiceNo ? <span className="font-mono text-[13px]">{r.invoiceNo}</span> : "-" },
+                  { key: "a", label: "Amount", align: "right", render: (r) => formatINR(r.amount) },
+                  { key: "u", label: "UTR", render: (r) => <span className="font-mono text-[13px]">{r.reference}</span> },
+                  { key: "r", label: "Receipt", render: (r) => r.receiptUrl ? (
+                    <button type="button" onClick={() => setViewing(r)} className="block" aria-label={`View receipt from ${r.business ?? r.code}`}>
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img src={r.receiptUrl} alt="" className="h-12 w-12 rounded border border-slate-200 object-cover" />
+                    </button>
+                  ) : "-" },
+                  { key: "s", label: "Status", render: (r) => <span><StatusBadge value={r.status} label={r.status === "PENDING" ? "To verify" : r.status === "SUCCEEDED" ? "Approved" : r.status === "FAILED" ? "Rejected" : undefined} />{r.reviewNote && <span className="mt-0.5 block max-w-[14rem] whitespace-normal text-xs text-slate-500">{r.reviewNote}</span>}</span> },
+                  { key: "x", label: "", align: "right", render: (r) => r.status === "PENDING" && (
+                    <span className="flex justify-end gap-1">
+                      <Button size="sm" variant="primary" loading={busy} onClick={() => approve(r)}>Approve</Button>
+                      <Button size="sm" variant="ghost" onClick={() => setRejecting(r)}>Reject</Button>
+                    </span>
+                  ) },
+                ]}
+              />
+              <Pager page={page} pageSize={50} total={d.total} onPage={setPage} />
+            </>
+          )}
+        </Loadable>
+      </Card>
+      <Modal open={!!viewing} title={viewing ? `Receipt - ${viewing.business ?? viewing.code}` : "Receipt"} onClose={() => setViewing(null)} size="lg"
+        footer={viewing?.status === "PENDING" && (
+          <>
+            <Button variant="ghost" onClick={() => { setRejecting(viewing); setViewing(null); }}>Reject</Button>
+            <Button variant="primary" loading={busy} onClick={() => approve(viewing)}>Approve {formatINR(viewing.amount)}</Button>
+          </>
+        )}>
+        {viewing && (
+          <div className="space-y-3">
+            <p className="text-sm text-slate-700">Invoice <span className="font-mono">{viewing.invoiceNo}</span> · {formatINR(viewing.amount)} · UTR <span className="font-mono">{viewing.reference}</span></p>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={viewing.receiptUrl} alt={`Payment receipt, UTR ${viewing.reference}`} className="mx-auto max-h-[70vh] rounded-lg border border-slate-200 object-contain" />
+          </div>
+        )}
+      </Modal>
+      <FormModal open={!!rejecting} title="Reject receipt" submitLabel="Reject"
+        intro={rejecting ? `The business (${rejecting.business ?? rejecting.code}) sees this reason and can upload a new receipt.` : undefined}
+        fields={{ reason: f.select("Reason", ["Payment not received in the bank", "Amount does not match the invoice", "UPI reference does not match", "Screenshot is unclear"], { required: true }), details: f.text("Details (optional)", { max: 200 }) }}
+        onClose={() => setRejecting(null)}
+        onSubmit={async (v) => {
+          await api(`/admin/payments/${rejecting.id}/reject`, { body: { reason: [v.reason, v.details].filter(Boolean).join(". ") } });
+          toast("Receipt rejected");
+          await done();
+        }} />
     </>
   );
 }
@@ -302,7 +390,7 @@ function PaymentsTable() {
       <div className="no-print mb-4 flex flex-wrap items-center gap-2">
         <SearchBox value={q} onChange={setQ} placeholder="Business or reference" label="Search payments" />
         <Select aria-label="Method" className="w-40" value={method} onChange={(e) => setMethod(e.target.value)}>
-          <option value="">Any method</option>{[...PAYMENT_METHODS, "CASHFREE"].map((m) => <option key={m} value={m}>{humanize(m)}</option>)}
+          <option value="">Any method</option>{PAYMENT_METHODS.map((m) => <option key={m} value={m}>{humanize(m)}</option>)}
         </Select>
         <Input aria-label="From date" type="date" className="w-40" value={from} max={to || undefined} onChange={(e) => setFrom(e.target.value)} />
         <span className="text-sm text-slate-500">to</span>

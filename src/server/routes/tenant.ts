@@ -1,5 +1,4 @@
 import { z } from "zod";
-import { logError } from "../core/log";
 import { PRODUCTS, PRODUCT_CODES, isProductCode, type ProductCode } from "@/config/catalog";
 import { route, type Ctx } from "../http/router";
 import { registerCrud } from "../http/crud";
@@ -12,11 +11,11 @@ import { inviteAccount, resendInvite } from "../core/invitations";
 import { isValidHandle, temporaryPassword } from "../core/ids";
 import { isUsable, summarize } from "../core/access";
 import { getPlatformSettings, productSettingsSchemas, saveProductSettings } from "../core/settings";
-import { fileUrl, saveImage } from "../core/storage";
-import { markInvoicePaid } from "../core/subscriptions";
+import { fileUrl, saveImage, storage } from "../core/storage";
 import { businessProfileSchema } from "../core/tenancy";
 import { writeAudit } from "../core/audit";
-import { cashfreeMode, cashfreePhone, createCashfreeOrder, fetchCashfreePayment, isCashfreeConfigured, newOrderId, verifyCashfreeWebhook, webhookTimestampFresh } from "../payments/cashfree";
+import { invoiceDue, submitReceipt, upiPayLink, UTR } from "../payments/upi";
+import QRCode from "qrcode";
 import { branches } from "@/shared/resources";
 
 // ---------------------------------------------------------------------------
@@ -359,7 +358,7 @@ route({
       planComparison(ctx.db, ctx.product),
       ctx.db.invoice.findMany({
         where: { tenantId: ctx.tenantId, OR: [{ productCode: ctx.product }, { productCode: null }] },
-        include: { payments: { where: { status: "SUCCEEDED" } } }, orderBy: { createdAt: "desc" }, take: 50,
+        include: { payments: { where: { OR: [{ status: "SUCCEEDED" }, { receiptKey: { not: null } }] }, orderBy: { createdAt: "desc" } } }, orderBy: { createdAt: "desc" }, take: 50,
       }),
       ctx.access.subscription
         ? ctx.db.subscriptionEvent.findMany({ where: { subscriptionId: ctx.access.subscription.id }, orderBy: { createdAt: "desc" }, take: 20 })
@@ -369,9 +368,20 @@ route({
     return {
       subscription: ctx.access.subscription,
       ...cmp,
-      invoices: invoices.map((i) => ({ ...i, paidAmount: i.payments.reduce((a, b) => a + b.amount, 0), payments: undefined })),
+      invoices: invoices.map((i) => {
+        const receipt = i.payments.find((x) => x.receiptKey);
+        return {
+          ...i, payments: undefined,
+          paidAmount: i.payments.filter((x) => x.status === "SUCCEEDED").reduce((a, b) => a + b.amount, 0),
+          // Latest uploaded receipt: PENDING (being verified) or FAILED (rejected, with the reason).
+          receipt: receipt && {
+            id: receipt.id, status: receipt.status, amount: receipt.amount, reference: receipt.reference,
+            createdAt: receipt.createdAt, reviewNote: receipt.reviewNote, url: fileUrl(receipt.receiptKey),
+          },
+        };
+      }),
       events,
-      onlinePayments: settings.onlinePayments && isCashfreeConfigured(),
+      upiPayments: !!settings.upiId,
       gstRateBp: settings.gstRateBp,
       support: { phone: settings.supportPhone, email: settings.supportEmail, whatsapp: settings.supportWhatsApp },
     };
@@ -410,123 +420,43 @@ route({
 });
 
 route({
-  method: "POST", path: "/:product/billing/invoices/:id/checkout", tag: "billing", summary: "Start an online (Cashfree) payment for a SAF invoice", auth: BILLING,
+  method: "GET", path: "/:product/billing/invoices/:id/upi", tag: "billing",
+  summary: "UPI payment details for a SAF invoice: SAF's UPI ID, amount due and a scannable QR code", auth: BILLING,
   handler: async (ctx) => {
     const settings = await getPlatformSettings(ctx.db);
-    if (!settings.onlinePayments || !isCashfreeConfigured())
-      throw new HttpError(503, "PAYMENTS_NOT_CONFIGURED", "Online payment is not available. Please contact SAF support to pay.");
-    const inv = await ctx.db.invoice.findFirst({ where: { id: ctx.params.id, tenantId: ctx.tenantId }, include: { payments: { where: { status: "SUCCEEDED" } } } });
+    if (!settings.upiId) throw new HttpError(503, "PAYMENTS_NOT_CONFIGURED", "UPI payment is not available. Please contact SAF support to pay.");
+    const inv = await ctx.db.invoice.findFirst({ where: { id: ctx.params.id, tenantId: ctx.tenantId }, select: { id: true, status: true } });
     if (!inv) throw notFound("Invoice");
     if (inv.status !== "ISSUED") throw conflict("This invoice is not payable.");
-    const due = inv.total - inv.payments.reduce((a, b) => a + b.amount, 0);
+    const { invoice, due } = await invoiceDue(ctx.db, inv.id);
     if (due < 100) throw conflict("Nothing left to pay on this invoice.");
-    const [user, biz] = await Promise.all([
-      ctx.db.user.findUnique({ where: { id: ctx.user.id }, select: { phone: true, email: true } }),
-      ctx.db.business.findUnique({ where: { tenantId: ctx.tenantId }, select: { phone: true, email: true } }),
-    ]);
-    const phone = cashfreePhone(user?.phone) ?? cashfreePhone(biz?.phone);
-    if (!phone) throw badRequest("Add a valid 10-digit mobile number to your business profile to pay online.");
-    const appUrl = (process.env.APP_URL || "http://localhost:3000").replace(/\/+$/, "");
-    const orderId = newOrderId(inv.invoiceNo);
-    const order = await createCashfreeOrder({
-      orderId, amountPaise: due,
-      customer: { id: `T${ctx.user.tenantCode ?? ""}${ctx.tenantId}`, phone, name: ctx.user.fullName, email: user?.email ?? biz?.email },
-      // Cashfree fills {order_id}; the subscription page confirms the order on return.
-      returnUrl: `${appUrl}/${ctx.params.product}/subscription?cf_order={order_id}`,
-      notifyUrl: appUrl.startsWith("https://") ? `${appUrl}/api/webhooks/cashfree` : undefined,
-      note: `${inv.invoiceNo} - ${inv.description}`,
-    });
-    await ctx.db.payment.create({
-      data: { tenantId: ctx.tenantId, invoiceId: inv.id, subscriptionId: inv.subscriptionId, amount: due, method: "CASHFREE", status: "PENDING", gatewayOrderId: order.orderId },
-    });
-    return { orderId: order.orderId, paymentSessionId: order.paymentSessionId, mode: cashfreeMode(), amount: due, currency: "INR" };
-  },
-});
-
-/**
- * Shared by the checkout confirmation and the webhook. Idempotent per gateway
- * order; refuses to settle when the gateway amount differs from the order.
- */
-export async function settleGatewayOrder(db: Tx, orderId: string, paymentId: string, amountPaise: number) {
-  const pending = await db.payment.findUnique({ where: { gatewayOrderId: orderId }, include: { invoice: true } });
-  if (!pending) throw notFound("Payment");
-  if (pending.status === "SUCCEEDED") return { payment: pending, settledNow: false };
-  if (amountPaise !== pending.amount) {
-    logError("cashfree", "amount mismatch", { orderId, expected: pending.amount, got: amountPaise });
-    await writeAudit(db, { tenantId: pending.tenantId, action: "billing.payment_amount_mismatch", entityType: "payment", entityId: pending.id, meta: { orderId, expected: pending.amount, got: amountPaise } });
-    throw conflict("The paid amount does not match this order. SAF support has been notified.");
-  }
-  // Compare-and-set: the browser confirmation and the webhook can arrive at the
-  // same moment; only one of them may move PENDING -> SUCCEEDED and settle the invoice.
-  const won = await db.payment.updateMany({
-    where: { id: pending.id, status: { not: "SUCCEEDED" } },
-    data: { status: "SUCCEEDED", gatewayPaymentId: paymentId, paidAt: new Date(), reference: paymentId },
-  });
-  const p = await db.payment.findUniqueOrThrow({ where: { id: pending.id } });
-  if (won.count === 0) return { payment: p, settledNow: false };
-  if (pending.invoice && pending.invoice.status === "ISSUED") {
-    const paid = await db.payment.aggregate({ where: { invoiceId: pending.invoice.id, status: "SUCCEEDED" }, _sum: { amount: true } });
-    if ((paid._sum.amount ?? 0) >= pending.invoice.total) await markInvoicePaid(db, pending.invoice, null);
-  }
-  return { payment: p, settledNow: true };
-}
-
-route({
-  method: "POST", path: "/:product/billing/cashfree/confirm", tag: "billing",
-  summary: "Confirm a Cashfree checkout: the server reads the order from Cashfree and settles it when PAID", auth: BILLING,
-  body: z.object({ orderId: z.string().min(3).max(45).regex(/^[A-Za-z0-9_-]+$/) }),
-  handler: async (ctx) => {
-    // RLS confines this lookup to the caller's business.
-    const pending = await ctx.db.payment.findFirst({ where: { gatewayOrderId: ctx.body.orderId, tenantId: ctx.tenantId }, select: { id: true, status: true } });
-    if (!pending) throw notFound("Payment");
-    if (pending.status === "SUCCEEDED") return { status: "PAID" };
-    const r = await fetchCashfreePayment(ctx.body.orderId);
-    if (!("cfPaymentId" in r)) return { status: r.status };
-    const { payment: p, settledNow } = await settleGatewayOrder(ctx.db, ctx.body.orderId, r.cfPaymentId, r.amountPaise);
-    if (settledNow) await ctx.audit("billing.online_payment", { type: "payment", id: p.id }, { orderId: ctx.body.orderId, gateway: "cashfree" });
-    return { status: "PAID" };
+    const link = upiPayLink({ upiId: settings.upiId, payeeName: settings.upiPayeeName, amountPaise: due, note: invoice.invoiceNo });
+    const qr = await QRCode.toDataURL(link, { margin: 1, width: 320, errorCorrectionLevel: "M" });
+    return { upiId: settings.upiId, payeeName: settings.upiPayeeName, amount: due, invoiceNo: invoice.invoiceNo, link, qr };
   },
 });
 
 route({
-  method: "POST", path: "/webhooks/cashfree", tag: "billing", summary: "Cashfree payment webhook (PAYMENT_SUCCESS_WEBHOOK)",
-  auth: { public: true }, rawBody: true, audit: false,
-  rateLimit: { limit: 120, windowMs: 60_000 },
+  method: "POST", path: "/:product/billing/invoices/:id/receipt", tag: "billing",
+  summary: "Upload a UPI payment receipt (screenshot + UPI reference) for SAF to verify", auth: BILLING, multipart: true,
+  rateLimit: { limit: 10, windowMs: 60 * 60_000, by: "user" },
   handler: async (ctx) => {
-    const raw = await ctx.req.text();
-    if (raw.length > 64 * 1024) throw new HttpError(413, "PAYLOAD_TOO_LARGE", "Webhook body too large.");
-    const h = ctx.req.headers;
-    if (!verifyCashfreeWebhook(raw, h.get("x-webhook-timestamp") || "", h.get("x-webhook-signature") || ""))
-      throw new HttpError(400, "INVALID_SIGNATURE", "Invalid webhook signature.");
-    // Replay window: a captured, correctly signed webhook is only accepted for 5 minutes.
-    if (!webhookTimestampFresh(h.get("x-webhook-timestamp") || ""))
-      throw new HttpError(400, "STALE_WEBHOOK", "Webhook timestamp outside the accepted window.");
-    const evt = JSON.parse(raw) as {
-      type?: string;
-      data?: { order?: { order_id?: string }; payment?: { cf_payment_id?: string | number; payment_status?: string; payment_amount?: number } };
-    };
-    const orderId = evt.data?.order?.order_id;
-    const pay = evt.data?.payment;
-    if (evt.type === "PAYMENT_SUCCESS_WEBHOOK" && pay?.payment_status === "SUCCESS" && orderId && /^[A-Za-z0-9_-]{3,45}$/.test(orderId)) {
-      // The webhook only tells us WHICH order to look at. Status, amount and
-      // payment id are read back from Cashfree's API before anything is settled.
-      const known = await withPlatform((db) => db.payment.findUnique({ where: { gatewayOrderId: orderId }, select: { id: true } }));
-      if (!known) return { ok: true };
-      const r = await fetchCashfreePayment(orderId).catch((e) => {
-        logError("cashfree", "webhook verification failed", orderId, e instanceof Error ? e.message : e);
-        return null;
-      });
-      if (r && "cfPaymentId" in r) {
-        await withPlatform(async (db) => {
-          const s = await settleGatewayOrder(db, orderId, r.cfPaymentId, r.amountPaise).catch((e) => {
-            logError("cashfree", "webhook not settled", orderId, e instanceof Error ? e.message : e);
-            return null;
-          });
-          if (s?.settledNow) await writeAudit(db, { tenantId: s.payment.tenantId, action: "billing.webhook_payment", entityType: "payment", entityId: s.payment.id, meta: { gateway: "cashfree", requestId: ctx.requestId } });
-        });
-      }
+    const utr = String(ctx.form!.get("utr") ?? "").replace(/\s+/g, "");
+    if (!UTR.test(utr)) throw badRequest("Enter the UPI reference / UTR number shown in your UPI app (letters and digits only).");
+    // Validate the invoice before storing anything.
+    const inv = await ctx.db.invoice.findFirst({ where: { id: ctx.params.id, tenantId: ctx.tenantId }, select: { id: true, status: true } });
+    if (!inv) throw notFound("Invoice");
+    if (inv.status !== "ISSUED") throw conflict("This invoice is not payable.");
+    const key = await saveImage(ctx.tenantId, "receipts", ctx.form!.get("file") as File | null);
+    try {
+      const pay = await submitReceipt(ctx.db, { tenantId: ctx.tenantId, invoiceId: inv.id, receiptKey: key, utr, userId: ctx.user.id });
+      await ctx.audit("billing.receipt_uploaded", { type: "payment", id: pay.id }, { invoiceId: inv.id, amount: pay.amount });
+      ctx.status = 201;
+      return { id: pay.id, status: pay.status, amount: pay.amount };
+    } catch (e) {
+      await storage().remove(key);
+      throw e;
     }
-    return { ok: true };
   },
 });
 

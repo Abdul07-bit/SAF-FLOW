@@ -5,26 +5,25 @@ const isProd = process.env.NODE_ENV === "production";
 const httpsApp = (process.env.APP_URL || "").startsWith("https://");
 
 /**
- * Content-Security-Policy. The only third party the browser talks to is the
- * Cashfree JS checkout (script, its payment frame and its API). Next.js needs
+ * Content-Security-Policy. The browser talks to no third party at all (UPI
+ * payments are a QR code plus an upi:// link opened by the phone). Next.js needs
  * inline bootstrap scripts, hence 'unsafe-inline' for scripts (no user content
  * is ever rendered as HTML: React escapes everything); 'unsafe-eval' is only
  * added in development for fast refresh.
  */
-const CASHFREE = "https://sdk.cashfree.com https://*.cashfree.com";
 export const CONTENT_SECURITY_POLICY = [
   "default-src 'self'",
-  `script-src 'self' 'unsafe-inline'${isProd ? "" : " 'unsafe-eval'"} https://sdk.cashfree.com`,
+  `script-src 'self' 'unsafe-inline'${isProd ? "" : " 'unsafe-eval'"}`,
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data: blob:",
   "font-src 'self' data:",
-  `connect-src 'self' ${CASHFREE}`,
-  `frame-src ${CASHFREE}`,
+  "connect-src 'self'",
+  "frame-src 'none'",
   "worker-src 'self'",
   "manifest-src 'self'",
   "object-src 'none'",
   "base-uri 'self'",
-  `form-action 'self' ${CASHFREE}`,
+  "form-action 'self'",
   "frame-ancestors 'none'",
   ...(httpsApp ? ["upgrade-insecure-requests"] : []),
 ].join("; ");

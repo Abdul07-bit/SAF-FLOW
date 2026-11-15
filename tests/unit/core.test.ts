@@ -1,4 +1,3 @@
-import { createHmac } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { ALL_FEATURES, BUSINESS_CATEGORIES, BUSINESS_TYPES, PRODUCT_CODES, PRODUCT_LIST, PRODUCTS, businessType, rolePermissionKeys } from "@/config/catalog";
 import { addDays, addMonths, daysBetween, endOfMonth, financialYear, hhmmToMinutes, istDate, startOfDayIST } from "@/lib/dates";
@@ -8,7 +7,8 @@ import { isValidBusinessCode, isValidHandle, normalizeUsername, temporaryPasswor
 import { periodExpiry } from "@/server/core/subscriptions";
 import { passwordPolicyError } from "@/server/auth/password";
 import { sniffImage } from "@/server/core/storage";
-import { cashfreePhone, newOrderId, verifyCashfreeWebhook } from "@/server/payments/cashfree";
+import { upiPayLink, UTR } from "@/server/payments/upi";
+import { UPI_ID } from "@/server/core/settings";
 import { listRoutes } from "@/server/api";
 import { RESOURCES } from "@/shared/resources";
 
@@ -98,23 +98,26 @@ describe("identity helpers", () => {
   });
 });
 
-describe("cashfree", () => {
-  it("webhook signature is base64 HMAC of timestamp + raw body", () => {
-    const body = '{"type":"PAYMENT_SUCCESS_WEBHOOK","data":{"payment":{"payment_amount":170.00}}}';
-    const sig = createHmac("sha256", "secret").update("1731470000000" + body).digest("base64");
-    expect(verifyCashfreeWebhook(body, "1731470000000", sig, "secret")).toBe(true);
-    expect(verifyCashfreeWebhook(body, "1731470000001", sig, "secret")).toBe(false);
-    expect(verifyCashfreeWebhook(body.replace("170.00", "170"), "1731470000000", sig, "secret")).toBe(false);
-    expect(verifyCashfreeWebhook(body, "1731470000000", sig, "")).toBe(false);
-    expect(verifyCashfreeWebhook(body, "", sig, "secret")).toBe(false);
+describe("upi", () => {
+  it("builds an NPCI upi://pay link with the amount in rupees", () => {
+    const link = upiPayLink({ upiId: "shop-1@okicici", payeeName: "Abdul Gaffar", amountPaise: 118000, note: "SAF/2026-27/000123" });
+    const u = new URL(link.replace("upi://", "https://x/"));
+    expect(link.startsWith("upi://pay?")).toBe(true);
+    expect(link).not.toContain("+");
+    expect(u.searchParams.get("pa")).toBe("shop-1@okicici");
+    expect(u.searchParams.get("pn")).toBe("Abdul Gaffar");
+    expect(u.searchParams.get("am")).toBe("1180.00");
+    expect(u.searchParams.get("cu")).toBe("INR");
+    expect(u.searchParams.get("tn")).toBe("SAF/2026-27/000123");
   });
-  it("normalises phones and order ids to what Cashfree accepts", () => {
-    expect(cashfreePhone("+91 98765 43210")).toBe("9876543210");
-    expect(cashfreePhone("09876543210")).toBe("9876543210");
-    expect(cashfreePhone("12345")).toBeNull();
-    expect(cashfreePhone(null)).toBeNull();
-    expect(newOrderId("SAF/2026-27/000123 with spaces and a very long tail")).toMatch(/^[A-Za-z0-9_-]{3,45}$/);
-    expect(newOrderId("X")).not.toBe(newOrderId("X"));
+  it("accepts UPI IDs and UTR numbers, rejects junk", () => {
+    expect(UPI_ID.test("7904113127abdul-2@okicici")).toBe(true);
+    expect(UPI_ID.test("no-at-sign")).toBe(false);
+    expect(UPI_ID.test("a@b c")).toBe(false);
+    expect(UTR.test("431245678901")).toBe(true);
+    expect(UTR.test("12345")).toBe(false);
+    expect(UTR.test("4312 4567")).toBe(false);
+    expect(UTR.test("<script>")).toBe(false);
   });
 });
 
@@ -171,7 +174,6 @@ describe("API authorisation policy (lint)", () => {
       "POST /auth/password-reset",
       "POST /jobs/renewals",
       "POST /public/dine/menu/:qrToken/order",
-      "POST /webhooks/cashfree",
     ]);
   });
   it("every /admin endpoint is Super Admin only, and nothing else is", () => {

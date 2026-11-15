@@ -16,7 +16,7 @@ SAF Flow builds on an existing working codebase (previously branded
 SMARTAUTO FLEX). It already provided:
 
 - Multi-tenant PostgreSQL with Row-Level Security (RLS).
-- Super Admin onboarding, plans and pricing, subscriptions and Cashfree online payments.
+- Super Admin onboarding, plans and pricing, subscriptions and UPI payments (QR + receipt upload, verified by the Super Admin).
 - All three products with staff, roles and attendance.
 - An automated test suite.
 

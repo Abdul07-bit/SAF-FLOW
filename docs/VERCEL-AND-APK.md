@@ -61,7 +61,6 @@ npm run db:seed
 | `S3_FORCE_PATH_STYLE` | `true` |
 | `NEXT_PUBLIC_SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | Supabase → Project Settings → API |
 | `SUPABASE_SECRET_KEY` | Supabase → Project Settings → API keys → secret key |
-| `CASHFREE_CLIENT_ID` / `CASHFREE_CLIENT_SECRET` / `CASHFREE_ENV` | optional; `sandbox` for testing |
 
 5. **Settings → Git → Production Branch**: `main`.
 

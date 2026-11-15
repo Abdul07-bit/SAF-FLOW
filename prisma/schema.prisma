@@ -77,8 +77,8 @@ enum PaymentMethod {
   CARD
   BANK_TRANSFER
   CHEQUE
-  RAZORPAY // legacy: before SAF Flow moved to Cashfree
-  CASHFREE
+  RAZORPAY // legacy gateway; kept so historic rows stay valid
+  CASHFREE // legacy gateway; kept so historic rows stay valid
   OTHER
 }
 
@@ -761,6 +761,11 @@ model Payment {
   notes            String?
   paidAt           DateTime?     @map("paid_at")
   recordedById     String?       @map("recorded_by_id") @db.Uuid
+  /// UPI payment screenshot uploaded by the business (private storage key).
+  receiptKey       String?       @map("receipt_key")
+  /// Super Admin's note when approving or rejecting a receipt.
+  reviewNote       String?       @map("review_note")
+  reviewedAt       DateTime?     @map("reviewed_at")
   createdAt        DateTime      @default(now()) @map("created_at")
 
   tenant       Tenant               @relation(fields: [tenantId], references: [id], onDelete: Cascade)

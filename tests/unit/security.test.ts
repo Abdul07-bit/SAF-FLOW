@@ -3,8 +3,6 @@ import { decryptSecret, encryptSecret, signFileUrl, verifyFileUrl } from "@/serv
 import { checkTotp, currentCode, hashRecovery, mfaRequiredFor, newRecoveryCodes, newTotpSecret } from "@/server/auth/mfa";
 import { clientIp } from "@/server/http/router";
 import { rateLimit, resetRateLimits } from "@/server/auth/ratelimit";
-import { verifyCashfreeWebhook, webhookTimestampFresh } from "@/server/payments/cashfree";
-import { createHmac } from "node:crypto";
 
 const saved = { ...process.env };
 afterEach(() => {
@@ -102,19 +100,6 @@ describe("request hygiene", () => {
     expect((await rateLimit("unit:a", 3, 60_000)).ok).toBe(false);
   });
 
-  it("Cashfree webhooks: HMAC over raw bytes, 5-minute freshness window", () => {
-    const body = '{"a":"170.00"}';
-    const ts = String(Date.now());
-    const sig = createHmac("sha256", "s3cret").update(ts + body).digest("base64");
-    expect(verifyCashfreeWebhook(body, ts, sig, "s3cret")).toBe(true);
-    expect(verifyCashfreeWebhook('{"a":170}', ts, sig, "s3cret")).toBe(false);
-    expect(verifyCashfreeWebhook(body, ts, sig, "")).toBe(false);
-    expect(webhookTimestampFresh(ts)).toBe(true);
-    expect(webhookTimestampFresh(String(Date.now() - 10 * 60_000))).toBe(false);
-    expect(webhookTimestampFresh(String(Math.floor(Date.now() / 1000)))).toBe(true); // seconds tolerated
-    expect(webhookTimestampFresh("abc")).toBe(false);
-  });
-
   it("audit metadata never stores credentials, OTP or recovery codes", async () => {
     const { writeAudit } = await import("@/server/core/audit");
     let stored: any = null;
@@ -128,7 +113,9 @@ describe("request hygiene", () => {
     expect(CONTENT_SECURITY_POLICY).toContain("frame-ancestors 'none'");
     expect(CONTENT_SECURITY_POLICY).toContain("object-src 'none'");
     expect(CONTENT_SECURITY_POLICY).toContain("base-uri 'self'");
-    expect(CONTENT_SECURITY_POLICY).toMatch(/script-src 'self' 'unsafe-inline'( 'unsafe-eval')? https:\/\/sdk\.cashfree\.com/);
+    expect(CONTENT_SECURITY_POLICY).toMatch(/script-src 'self' 'unsafe-inline'( 'unsafe-eval')?;/);
+    expect(CONTENT_SECURITY_POLICY).toContain("frame-src 'none'");
+    expect(CONTENT_SECURITY_POLICY).not.toMatch(/https:\/\//);
   });
 });
 

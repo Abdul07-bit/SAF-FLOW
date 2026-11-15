@@ -1,10 +1,16 @@
-import { createHmac } from "node:crypto";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { addDays, addMonths, istDate, todayIST } from "@/lib/dates";
 import { withTenant } from "@/server/db";
-import { handleRequest } from "@/server/api";
 import { api, createBusiness, expectError } from "../helpers";
 import { TEST_ENV } from "../env";
+
+const PNG_1PX = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64");
+function receiptForm(utr: string, bytes: Uint8Array = PNG_1PX) {
+  const fd = new FormData();
+  fd.append("utr", utr);
+  fd.append("file", new File([new Uint8Array(bytes)], "receipt.png", { type: "image/png" }));
+  return fd;
+}
 
 async function subOf(biz: { code: string; admin: string }, product?: string) {
   const r = await api("GET", `/admin/subscriptions?q=${biz.code}`, { cookie: biz.admin });
@@ -69,124 +75,72 @@ describe("subscriptions & billing", () => {
     expect(billing.body.plans).toHaveLength(2);
   });
 
-  it("online payment: Cashfree checkout, server-side confirmation, amount checked, replays harmless", async () => {
+  it("UPI receipts: business pays SAF's UPI ID, uploads proof, Super Admin approves or rejects", async () => {
     const biz = await createBusiness([{ productCode: "bill", tier: "BASIC", startDate: addDays(todayIST(), -27), expiryDate: addDays(todayIST(), 3), markSetupPaid: true, markSubscriptionPaid: true }]);
     await api("POST", "/jobs/renewals", { headers: { "x-cron-secret": TEST_ENV.CRON_SECRET } });
     const open = (await api("GET", `/admin/invoices?tenantId=${biz.tenantId}&status=ISSUED`, { cookie: biz.admin })).body.items;
     expect(open).toHaveLength(1);
     const inv = open[0];
 
-    // Fake Cashfree at the network boundary.
-    let orderBody: any = null;
-    let gatewayStatus = "ACTIVE";
-    let paidAmount = 0;
-    const realFetch = globalThis.fetch;
-    const spy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input: any, init?: any) => {
-      const url = String(input);
-      if (!url.startsWith("https://sandbox.cashfree.com/pg/")) return realFetch(input, init);
-      expect((init.headers as Record<string, string>)["x-client-secret"]).toBe(TEST_ENV.CASHFREE_CLIENT_SECRET);
-      const json = (b: unknown) => new Response(JSON.stringify(b), { status: 200, headers: { "content-type": "application/json" } });
-      if (url.endsWith("/orders") && init.method === "POST") {
-        orderBody = JSON.parse(init.body);
-        return json({ order_id: orderBody.order_id, cf_order_id: 991, payment_session_id: "session_test_1", order_status: "ACTIVE" });
-      }
-      if (url.endsWith("/payments")) return json([{ cf_payment_id: 5550001, payment_status: "SUCCESS", payment_amount: paidAmount }]);
-      return json({ order_status: gatewayStatus });
-    });
-    try {
-      const co = await api("POST", `/bill/billing/invoices/${inv.id}/checkout`, { cookie: biz.manager });
-      expect(co.status, JSON.stringify(co.body)).toBe(200);
-      expect(co.body).toMatchObject({ paymentSessionId: "session_test_1", mode: "sandbox", amount: inv.total });
-      expect(orderBody).toMatchObject({ order_amount: inv.total / 100, order_currency: "INR", customer_details: { customer_phone: "9876543210" } });
-      expect(orderBody.order_meta.return_url).toContain("/bill/subscription?cf_order={order_id}");
-      const orderId = co.body.orderId as string;
-      expect(orderId).toMatch(/^[A-Za-z0-9_-]{3,45}$/);
+    // Payment details: SAF's UPI ID, the amount due and a QR encoding the upi://pay link.
+    const upi = await api("GET", `/bill/billing/invoices/${inv.id}/upi`, { cookie: biz.manager });
+    expect(upi.status, JSON.stringify(upi.body)).toBe(200);
+    expect(upi.body).toMatchObject({ upiId: "7904113127abdul-2@okicici", amount: inv.total, invoiceNo: inv.invoiceNo });
+    expect(upi.body.link).toContain(`am=${(inv.total / 100).toFixed(2)}`);
+    expect(upi.body.qr).toMatch(/^data:image\/png;base64,/);
 
-      // Not paid yet: nothing settles.
-      expect((await api("POST", "/bill/billing/cashfree/confirm", { cookie: biz.manager, body: { orderId } })).body.status).toBe("ACTIVE");
-      // Gateway says PAID but for the wrong amount: refused.
-      gatewayStatus = "PAID";
-      paidAmount = 1;
-      expectError(await api("POST", "/bill/billing/cashfree/confirm", { cookie: biz.manager, body: { orderId } }), 409);
-      paidAmount = inv.total / 100;
-      const ok = await api("POST", "/bill/billing/cashfree/confirm", { cookie: biz.manager, body: { orderId } });
-      expect(ok.body, JSON.stringify(ok.body)).toEqual({ status: "PAID" });
-      expect((await api("POST", "/bill/billing/cashfree/confirm", { cookie: biz.manager, body: { orderId } })).body.status).toBe("PAID");
+    // Bad input is refused before anything is stored.
+    expectError(await api("POST", `/bill/billing/invoices/${inv.id}/receipt`, { cookie: biz.manager, body: receiptForm("12") }), 400);
+    expectError(await api("POST", `/bill/billing/invoices/${inv.id}/receipt`, { cookie: biz.manager, body: receiptForm("431245678901", Buffer.from("not an image")) }), 400);
+    // Another business cannot pay (or see) this invoice.
+    const other = await createBusiness([{ productCode: "bill", tier: "BASIC" }]);
+    expectError(await api("GET", `/bill/billing/invoices/${inv.id}/upi`, { cookie: other.manager }), 404);
+    expectError(await api("POST", `/bill/billing/invoices/${inv.id}/receipt`, { cookie: other.manager, body: receiptForm("431245678901") }), 404);
 
-      // Another business cannot confirm (or even see) this order.
-      const other = await createBusiness([{ productCode: "bill", tier: "BASIC" }]);
-      expectError(await api("POST", "/bill/billing/cashfree/confirm", { cookie: other.manager, body: { orderId } }), 404);
-    } finally {
-      spy.mockRestore();
-    }
+    // First receipt: rejected by SAF.
+    const r1 = await api("POST", `/bill/billing/invoices/${inv.id}/receipt`, { cookie: biz.manager, body: receiptForm("431245678901") });
+    expect(r1.status, JSON.stringify(r1.body)).toBe(201);
+    expect(r1.body).toMatchObject({ status: "PENDING", amount: inv.total });
+    // Only one receipt can wait per invoice.
+    expectError(await api("POST", `/bill/billing/invoices/${inv.id}/receipt`, { cookie: biz.manager, body: receiptForm("431245678902") }), 409);
+
+    const queue = await api("GET", `/admin/payments?receipts=1&status=PENDING&tenantId=${biz.tenantId}`, { cookie: biz.admin });
+    expect(queue.body.items).toHaveLength(1);
+    const pending = queue.body.items[0];
+    expect(pending).toMatchObject({ reference: "431245678901", method: "UPI", amount: inv.total });
+    expect(pending.receiptUrl).toMatch(/\/api\/files\/t\/.+\/receipts\/.+\.png\?exp=\d+&sig=/);
+    // Receipts are private: the bare file URL is refused.
+    expectError(await api("GET", pending.receiptUrl.replace(/^\/api/, "").split("?")[0]), 404);
+    expect((await api("GET", pending.receiptUrl.replace(/^\/api/, ""))).status).toBe(200);
+
+    expectError(await api("POST", `/admin/payments/${pending.id}/reject`, { cookie: biz.admin, body: { reason: "x" } }), 400);
+    expect((await api("POST", `/admin/payments/${pending.id}/reject`, { cookie: biz.admin, body: { reason: "Payment not received in the bank" } })).status).toBe(200);
+    expectError(await api("POST", `/admin/payments/${pending.id}/approve`, { cookie: biz.admin, body: {} }), 409);
+    let mine = (await api("GET", "/bill/subscription", { cookie: biz.manager })).body.invoices.find((i: any) => i.id === inv.id);
+    expect(mine).toMatchObject({ status: "ISSUED", paidAmount: 0, receipt: { status: "FAILED", reviewNote: "Payment not received in the bank" } });
+
+    // Second receipt: approved -> invoice paid, subscription renewed, business notified.
+    const r2 = await api("POST", `/bill/billing/invoices/${inv.id}/receipt`, { cookie: biz.manager, body: receiptForm("431245678903") });
+    expect(r2.status, JSON.stringify(r2.body)).toBe(201);
+    mine = (await api("GET", "/bill/subscription", { cookie: biz.manager })).body.invoices.find((i: any) => i.id === inv.id);
+    expect(mine.receipt.status).toBe("PENDING");
+    // Two admins clicking at the same moment settle it once.
+    const [a1, a2] = await Promise.all([
+      api("POST", `/admin/payments/${r2.body.id}/approve`, { cookie: biz.admin, body: {} }),
+      api("POST", `/admin/payments/${r2.body.id}/approve`, { cookie: biz.admin, body: {} }),
+    ]);
+    expect([a1.status, a2.status].sort()).toEqual([200, 409]);
 
     expect((await api("GET", `/admin/invoices/${inv.id}`, { cookie: biz.admin })).body.invoice.status).toBe("PAID");
     const sub = await subOf(biz);
     expect(istDate(new Date(sub.currentPeriodEnd))).toBe(addDays(addMonths(addDays(todayIST(), 4), 1), -1));
-    const pays = await api("GET", `/admin/payments?tenantId=${biz.tenantId}&method=CASHFREE`, { cookie: biz.admin });
-    expect(pays.body.items).toHaveLength(1);
-    expect(pays.body.items[0].reference).toBe("5550001");
-  });
-
-  it("webhook: signature + freshness checked, gateway re-verified, settles exactly once (even racing the browser)", async () => {
-    const biz = await createBusiness([{ productCode: "dine", tier: "BASIC" }]);
-    const inv = (await api("GET", `/admin/invoices?tenantId=${biz.tenantId}&status=ISSUED`, { cookie: biz.admin })).body.items.find((i: any) => i.kind === "SETUP");
-    const orderId = `wh-${biz.code}`;
-    await withTenant(biz.tenantId, (db) =>
-      db.payment.create({ data: { tenantId: biz.tenantId, invoiceId: inv.id, amount: inv.total, method: "CASHFREE", status: "PENDING", gatewayOrderId: orderId } }),
-    );
-    // Amounts as Cashfree sends them (rupees, two decimals): the signature covers these exact bytes.
-    const amt = (inv.total / 100).toFixed(2);
-    const raw = `{"data":{"order":{"order_id":"${orderId}","order_amount":${amt}},"payment":{"cf_payment_id":7770001,"payment_status":"SUCCESS","payment_amount":${amt}}},"event_time":"2026-11-13T10:00:00+05:30","type":"PAYMENT_SUCCESS_WEBHOOK"}`;
-    const post = (sig: string, ts = String(Date.now())) =>
-      handleRequest(new Request("http://localhost:3000/api/webhooks/cashfree", {
-        method: "POST", body: raw, headers: { "content-type": "application/json", "x-webhook-timestamp": ts, "x-webhook-signature": sig },
-      }));
-    const sign = (ts: string) => createHmac("sha256", TEST_ENV.CASHFREE_CLIENT_SECRET).update(ts + raw).digest("base64");
-
-    // Fake Cashfree API: the webhook body is never trusted on its own.
-    let gatewayStatus = "ACTIVE";
-    const realFetch = globalThis.fetch;
-    const spy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input: any, init?: any) => {
-      const url = String(input);
-      if (!url.startsWith("https://sandbox.cashfree.com/pg/")) return realFetch(input, init);
-      const json = (b: unknown) => new Response(JSON.stringify(b), { status: 200, headers: { "content-type": "application/json" } });
-      if (url.endsWith("/payments")) return json([{ cf_payment_id: 7770001, payment_status: "SUCCESS", payment_amount: Number(amt) }]);
-      return json({ order_status: gatewayStatus, order_currency: "INR" });
-    });
-    try {
-      expect((await post("deadbeef")).status).toBe(400);
-      // Correctly signed but replayed long after it was sent.
-      const old = String(Date.now() - 60 * 60_000);
-      const stale = await post(sign(old), old);
-      expect(stale.status).toBe(400);
-      expect((await stale.json()).error.code).toBe("STALE_WEBHOOK");
-
-      // Signed and fresh, but Cashfree's own API says the order is not paid: nothing settles.
-      let ts = String(Date.now());
-      expect((await post(sign(ts), ts)).status).toBe(200);
-      expect((await api("GET", `/admin/invoices/${inv.id}`, { cookie: biz.admin })).body.invoice.status).toBe("ISSUED");
-
-      // Paid at the gateway: webhook and browser confirmation race; exactly one settles.
-      gatewayStatus = "PAID";
-      ts = String(Date.now());
-      const [w, c] = await Promise.all([
-        post(sign(ts), ts),
-        api("POST", "/dine/billing/cashfree/confirm", { cookie: biz.manager, body: { orderId } }),
-      ]);
-      expect(w.status).toBe(200);
-      expect(c.body.status, JSON.stringify(c.body)).toBe("PAID");
-      expect((await post(sign(ts), ts)).status).toBe(200); // retries are harmless
-    } finally {
-      spy.mockRestore();
-    }
-    expect((await api("GET", `/admin/invoices/${inv.id}`, { cookie: biz.admin })).body.invoice.status).toBe("PAID");
-    const settled = await withTenant(biz.tenantId, (db) => db.auditLog.count({
-      where: { tenantId: biz.tenantId, action: { in: ["billing.webhook_payment", "billing.online_payment"] } },
-    }));
-    expect(settled).toBe(1);
-    const succeeded = await withTenant(biz.tenantId, (db) => db.payment.count({ where: { gatewayOrderId: orderId, status: "SUCCEEDED" } }));
+    const notes = (await api("GET", "/me/notifications", { cookie: biz.manager })).body.items.map((n: any) => n.kind);
+    expect(notes).toEqual(expect.arrayContaining(["payment.approved", "payment.rejected"]));
+    const succeeded = await withTenant(biz.tenantId, (db) => db.payment.count({ where: { invoiceId: inv.id, status: "SUCCEEDED" } }));
     expect(succeeded).toBe(1);
+    // Paid invoices take no more receipts; a used UTR cannot be reused elsewhere.
+    expectError(await api("POST", `/bill/billing/invoices/${inv.id}/receipt`, { cookie: biz.manager, body: receiptForm("431245678904") }), 409);
+    expectError(await api("GET", `/bill/billing/invoices/${inv.id}/upi`, { cookie: biz.manager }), 409);
   });
 
   it("pricing is configured per product and never hardcoded", async () => {

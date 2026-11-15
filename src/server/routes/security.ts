@@ -17,8 +17,8 @@ import type { Tx } from "../db";
 import { revokeUserSessions } from "../auth/session";
 import { mfaRequiredFor } from "../auth/mfa";
 import { appSecretConfigured } from "../core/keys";
-import { isCashfreeConfigured } from "../payments/cashfree";
 import { sharedRateLimitConfigured } from "../auth/ratelimit";
+import { getPlatformSettings } from "../core/settings";
 
 const H = 3_600_000;
 const FAILED = ["auth.login_failed", "auth.account_locked", "auth.login_blocked_locked", "auth.mfa_failed", "auth.step_up_failed"];
@@ -80,6 +80,7 @@ route({
       db.tenant.groupBy({ by: ["status"], _count: { _all: true } }),
     ]);
     const rateLimited24h = await db.auditLog.count({ where: { action: "security.rate_limited", createdAt: { gt: d1 } } });
+    const platformSettings = await getPlatformSettings(db);
 
     const alerts: Alert[] = [];
     const noMfaAdmins = platformUsers.filter((u) => !u.mfaEnabledAt);
@@ -122,7 +123,7 @@ route({
         { check: "Rate limiting active", ok: !(process.env.SAF_DISABLE_RATE_LIMIT === "1" && process.env.NODE_ENV !== "production") },
         { check: "Two-step verification required for SAF Team", ok: required("platform") },
         { check: "Two-step verification required for business owners", ok: required("owners") },
-        { check: "Payment gateway configured", ok: isCashfreeConfigured() },
+        { check: "UPI ID for invoice payments set (Global settings)", ok: !!platformSettings.upiId },
         { check: "Scheduled jobs secret (CRON_SECRET)", ok: (process.env.CRON_SECRET || "").length >= 12 },
         { check: "Shared rate limiting (Upstash Redis) for multi-server hosting", ok: sharedRateLimitConfigured() },
       ],

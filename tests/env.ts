@@ -9,9 +9,6 @@ export const TEST_ENV: Record<string, string> = {
   STORAGE_DRIVER: "local",
   STORAGE_LOCAL_DIR: "./storage-test",
   CRON_SECRET: "test-cron-secret-0123456789",
-  CASHFREE_CLIENT_ID: "cf_test_client",
-  CASHFREE_CLIENT_SECRET: "cf_test_secret",
-  CASHFREE_ENV: "sandbox",
   LOGIN_MAX_FAILURES: "5",
   LOGIN_LOCK_MINUTES: "15",
   // The cached admin session is reused across files; keep its fresh sign-in valid.

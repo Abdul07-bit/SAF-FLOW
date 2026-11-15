@@ -232,7 +232,7 @@ export function AdminAudit() {
 
 interface Settings {
   platformName: string; supportPhone: string; supportEmail: string; supportWhatsApp: string; companyAddress: string; companyGstin: string;
-  invoicePrefix: string; gstRateBp: number; reminderDays: number[]; invoiceDueDays: number; onlinePayments: boolean;
+  invoicePrefix: string; gstRateBp: number; reminderDays: number[]; invoiceDueDays: number; upiId: string; upiPayeeName: string;
 }
 
 function Flag({ ok, children }: { ok: boolean; children: React.ReactNode }) {
@@ -240,7 +240,7 @@ function Flag({ ok, children }: { ok: boolean; children: React.ReactNode }) {
 }
 
 export function AdminSettings() {
-  const data = useApi<{ settings: Settings; integrations: { cashfree: boolean; cashfreeMode: "sandbox" | "production"; storage: string; appUrl: string; cronConfigured: boolean } }>("/admin/settings");
+  const data = useApi<{ settings: Settings; integrations: { storage: string; appUrl: string; cronConfigured: boolean } }>("/admin/settings");
   const [form, setForm] = useState<Record<string, string | boolean> | null>(null);
   const [busy, run] = useAction();
   const [jobBusy, runJob] = useAction();
@@ -263,7 +263,7 @@ export function AdminSettings() {
           platformName: form.platformName, supportPhone: form.supportPhone, supportEmail: form.supportEmail, supportWhatsApp: form.supportWhatsApp,
           companyAddress: form.companyAddress, companyGstin: form.companyGstin, invoicePrefix: form.invoicePrefix,
           gstRateBp: Math.round(Number(form.gstRatePct) * 100), reminderDays: [...new Set(reminderDays)].sort((a, b) => b - a),
-          invoiceDueDays: Number(form.invoiceDueDays), onlinePayments: !!form.onlinePayments,
+          invoiceDueDays: Number(form.invoiceDueDays), upiId: String(form.upiId).trim(), upiPayeeName: String(form.upiPayeeName).trim(),
         },
       });
       await data.reload();
@@ -299,10 +299,12 @@ export function AdminSettings() {
               <Card title="Renewals" subtitle="Grace periods are set per plan under Plans and pricing.">
                 <div className="grid gap-x-4 gap-y-3 sm:grid-cols-2">
                   <Field label="Renewal reminders (days before expiry)" help="Comma-separated, up to 6. The renewal invoice is raised at the earliest reminder.">{text("reminderDays", { placeholder: "15, 7, 3, 1" })}</Field>
-                  <label className="flex items-center gap-2 self-center text-sm text-slate-800">
-                    <input type="checkbox" className="h-4 w-4 accent-[var(--brand)]" checked={!!form.onlinePayments} onChange={(e) => setForm((s) => ({ ...s!, onlinePayments: e.target.checked }))} />
-                    Let businesses pay invoices online
-                  </label>
+                </div>
+              </Card>
+              <Card title="UPI payments" subtitle="Businesses scan a QR for this UPI ID, pay, and upload the receipt. You approve it under Payments.">
+                <div className="grid gap-x-4 gap-y-3 sm:grid-cols-2">
+                  <Field label="UPI ID" help="Leave empty to hide UPI payment from businesses.">{text("upiId", { maxLength: 320, placeholder: "name@okicici", autoComplete: "off" })}</Field>
+                  <Field label="Account holder name" help="Shown in the payer's UPI app.">{text("upiPayeeName", { maxLength: 60 })}</Field>
                 </div>
               </Card>
               <Button type="submit" variant="primary" loading={busy}>Save settings</Button>
@@ -311,12 +313,11 @@ export function AdminSettings() {
             <div className="space-y-4">
               <Card title="Integrations" subtitle="Configured through environment variables on the server.">
                 <ul className="space-y-2 text-sm text-slate-800">
-                  <li><Flag ok={d.integrations.cashfree}>Cashfree online payments {d.integrations.cashfree ? `configured (${d.integrations.cashfreeMode})` : "not configured"}</Flag></li>
+                  <li><Flag ok={!!d.settings.upiId}>UPI payments {d.settings.upiId ? <span className="font-mono text-[13px]">{d.settings.upiId}</span> : "off (no UPI ID)"}</Flag></li>
                   <li><Flag ok={d.integrations.cronConfigured}>Scheduled renewal job {d.integrations.cronConfigured ? "secured" : "secret not set"}</Flag></li>
                   <li><Flag ok>File storage: {d.integrations.storage}</Flag></li>
                   <li><Flag ok={!!d.integrations.appUrl}>Public URL: <span className="font-mono text-[13px]">{d.integrations.appUrl || "not set"}</span></Flag></li>
                 </ul>
-                {!d.integrations.cashfree && form.onlinePayments && <div className="mt-3"><Notice tone="warn">Online payments are switched on but Cashfree keys are missing, so businesses see manual payment instructions.</Notice></div>}
               </Card>
               <Card title="Renewal job" subtitle="Runs automatically every 6 hours in the Docker deployment.">
                 <p className="text-sm text-slate-600">Expires lapsed subscriptions after their grace period, applies scheduled plan changes, raises renewal invoices and sends reminders.</p>

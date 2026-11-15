@@ -25,9 +25,9 @@
     }
   ],
   "paths": {
-    "/api/{product}/billing/cashfree/confirm": {
+    "/api/{product}/billing/invoices/{id}/receipt": {
       "post": {
-        "summary": "Confirm a Cashfree checkout: the server reads the order from Cashfree and settles it when PAID",
+        "summary": "Upload a UPI payment receipt (screenshot + UPI reference) for SAF to verify",
         "description": "**Authorization:** Tenant user of the product in the URL with a usable subscription (expired/suspended allowed); role permission: subscription.view.\n\nMutations require header `x-saf-request: 1` (CSRF guard).",
         "tags": [
           "billing"
@@ -35,6 +35,14 @@
         "parameters": [
           {
             "name": "product",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
             "in": "path",
             "required": true,
             "schema": {
@@ -70,31 +78,25 @@
         "requestBody": {
           "required": true,
           "content": {
-            "application/json": {
+            "multipart/form-data": {
               "schema": {
-                "$schema": "https://json-schema.org/draft/2020-12/schema",
                 "type": "object",
                 "properties": {
-                  "orderId": {
+                  "file": {
                     "type": "string",
-                    "minLength": 3,
-                    "maxLength": 45,
-                    "pattern": "^[A-Za-z0-9_-]+$"
+                    "format": "binary"
                   }
-                },
-                "required": [
-                  "orderId"
-                ]
+                }
               }
             }
           }
         }
       }
     },
-    "/api/{product}/billing/invoices/{id}/checkout": {
-      "post": {
-        "summary": "Start an online (Cashfree) payment for a SAF invoice",
-        "description": "**Authorization:** Tenant user of the product in the URL with a usable subscription (expired/suspended allowed); role permission: subscription.view.\n\nMutations require header `x-saf-request: 1` (CSRF guard).",
+    "/api/{product}/billing/invoices/{id}/upi": {
+      "get": {
+        "summary": "UPI payment details for a SAF invoice: SAF's UPI ID, amount due and a scannable QR code",
+        "description": "**Authorization:** Tenant user of the product in the URL with a usable subscription (expired/suspended allowed); role permission: subscription.view.",
         "tags": [
           "billing"
         ],
@@ -730,6 +732,194 @@
               }
             }
           }
+        }
+      }
+    },
+    "/api/{product}/security/overview": {
+      "get": {
+        "summary": "Your business: staff access, MFA, sessions and sign-in activity",
+        "description": "**Authorization:** Tenant user of the product in the URL with a usable subscription; role permission: staff.manage.",
+        "tags": [
+          "security"
+        ],
+        "parameters": [
+          {
+            "name": "product",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "402": {
+            "description": "Subscription expired"
+          },
+          "403": {
+            "description": "Not permitted (plan feature, role permission, tenant suspended...)"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        },
+        "x-saf-auth": {
+          "product": ":product",
+          "permission": "staff.manage"
+        }
+      }
+    },
+    "/api/{product}/security/sessions": {
+      "get": {
+        "summary": "Signed-in devices of your business's accounts",
+        "description": "**Authorization:** Tenant user of the product in the URL with a usable subscription; role permission: staff.manage.",
+        "tags": [
+          "security"
+        ],
+        "parameters": [
+          {
+            "name": "product",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "402": {
+            "description": "Subscription expired"
+          },
+          "403": {
+            "description": "Not permitted (plan feature, role permission, tenant suspended...)"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        },
+        "x-saf-auth": {
+          "product": ":product",
+          "permission": "staff.manage"
+        }
+      }
+    },
+    "/api/{product}/security/sessions/{id}/revoke": {
+      "post": {
+        "summary": "Sign one device out",
+        "description": "**Authorization:** Tenant user of the product in the URL with a usable subscription; role permission: staff.manage.\n\nMutations require header `x-saf-request: 1` (CSRF guard).",
+        "tags": [
+          "security"
+        ],
+        "parameters": [
+          {
+            "name": "product",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "402": {
+            "description": "Subscription expired"
+          },
+          "403": {
+            "description": "Not permitted (plan feature, role permission, tenant suspended...)"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        },
+        "x-saf-auth": {
+          "product": ":product",
+          "permission": "staff.manage"
+        }
+      }
+    },
+    "/api/{product}/security/users/{userId}/revoke-sessions": {
+      "post": {
+        "summary": "Sign a staff member out of every device",
+        "description": "**Authorization:** Tenant user of the product in the URL with a usable subscription; role permission: staff.manage.\n\nMutations require header `x-saf-request: 1` (CSRF guard).",
+        "tags": [
+          "security"
+        ],
+        "parameters": [
+          {
+            "name": "product",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "userId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "402": {
+            "description": "Subscription expired"
+          },
+          "403": {
+            "description": "Not permitted (plan feature, role permission, tenant suspended...)"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        },
+        "x-saf-auth": {
+          "product": ":product",
+          "permission": "staff.manage"
         }
       }
     },
@@ -3417,6 +3607,58 @@
         }
       }
     },
+    "/api/{product}/team/{userId}/mfa-reset": {
+      "post": {
+        "summary": "Owner only: reset a staff member's two-step verification (lost phone)",
+        "description": "**Authorization:** Tenant user of the product in the URL with a usable subscription; plan feature: staff_logins; role permission: staff.manage.\n\nMutations require header `x-saf-request: 1` (CSRF guard).",
+        "tags": [
+          "team"
+        ],
+        "parameters": [
+          {
+            "name": "product",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "userId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "402": {
+            "description": "Subscription expired"
+          },
+          "403": {
+            "description": "Not permitted (plan feature, role permission, tenant suspended...)"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        },
+        "x-saf-auth": {
+          "product": ":product",
+          "feature": "staff_logins",
+          "permission": "staff.manage"
+        }
+      }
+    },
     "/api/{product}/team/{userId}/resend-invite": {
       "post": {
         "summary": "Send a fresh invitation to a staff member who has not accepted yet",
@@ -5412,6 +5654,31 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "PENDING",
+                "SUCCEEDED",
+                "FAILED",
+                "REFUNDED"
+              ]
+            }
+          },
+          {
+            "name": "receipts",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "1"
+              ]
+            }
           }
         ],
         "responses": {
@@ -5514,6 +5781,135 @@
                 "required": [
                   "invoiceId",
                   "method"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/payments/{id}/approve": {
+      "post": {
+        "summary": "Approve a UPI receipt after checking the bank statement: settles the invoice",
+        "description": "**Authorization:** SAF Super Admin only.\n\nMutations require header `x-saf-request: 1` (CSRF guard).",
+        "tags": [
+          "admin"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "402": {
+            "description": "Subscription expired"
+          },
+          "403": {
+            "description": "Not permitted (plan feature, role permission, tenant suspended...)"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        },
+        "x-saf-auth": {
+          "platform": "platform.billing.manage",
+          "target": "payment"
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "amount": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 9007199254740991
+                  },
+                  "note": {
+                    "type": "string",
+                    "maxLength": 300
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/payments/{id}/reject": {
+      "post": {
+        "summary": "Reject a UPI receipt (payment not received or wrong amount); the business can upload again",
+        "description": "**Authorization:** SAF Super Admin only.\n\nMutations require header `x-saf-request: 1` (CSRF guard).",
+        "tags": [
+          "admin"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "402": {
+            "description": "Subscription expired"
+          },
+          "403": {
+            "description": "Not permitted (plan feature, role permission, tenant suspended...)"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        },
+        "x-saf-auth": {
+          "platform": "platform.billing.manage",
+          "target": "payment"
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "reason": {
+                    "type": "string",
+                    "minLength": 3,
+                    "maxLength": 300
+                  }
+                },
+                "required": [
+                  "reason"
                 ]
               }
             }
@@ -6049,6 +6445,217 @@
         }
       }
     },
+    "/api/admin/security/events": {
+      "get": {
+        "summary": "Security-relevant audit events across the platform",
+        "description": "**Authorization:** SAF Super Admin only.",
+        "tags": [
+          "security"
+        ],
+        "parameters": [
+          {
+            "name": "kind",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "default": "all",
+              "type": "string",
+              "enum": [
+                "all",
+                "failed",
+                "signin",
+                "denied",
+                "mfa",
+                "admin"
+              ]
+            }
+          },
+          {
+            "name": "tenantId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "402": {
+            "description": "Subscription expired"
+          },
+          "403": {
+            "description": "Not permitted (plan feature, role permission, tenant suspended...)"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        },
+        "x-saf-auth": {
+          "platform": "platform.security.read"
+        }
+      }
+    },
+    "/api/admin/security/overview": {
+      "get": {
+        "summary": "Platform security status, alerts and trends",
+        "description": "**Authorization:** SAF Super Admin only.",
+        "tags": [
+          "security"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "402": {
+            "description": "Subscription expired"
+          },
+          "403": {
+            "description": "Not permitted (plan feature, role permission, tenant suspended...)"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        },
+        "x-saf-auth": {
+          "platform": "platform.security.read"
+        }
+      }
+    },
+    "/api/admin/security/users/{id}/revoke-sessions": {
+      "post": {
+        "summary": "Sign a user out of every device (incident response)",
+        "description": "**Authorization:** SAF Super Admin only.\n\nMutations require header `x-saf-request: 1` (CSRF guard).",
+        "tags": [
+          "security"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "402": {
+            "description": "Subscription expired"
+          },
+          "403": {
+            "description": "Not permitted (plan feature, role permission, tenant suspended...)"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        },
+        "x-saf-auth": {
+          "platform": "platform.security.manage",
+          "elevated": true
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "reason": {
+                    "type": "string",
+                    "minLength": 5,
+                    "maxLength": 300
+                  }
+                },
+                "required": [
+                  "reason"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/security/users/{id}/sessions": {
+      "get": {
+        "summary": "A user's active sessions",
+        "description": "**Authorization:** SAF Super Admin only.",
+        "tags": [
+          "security"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "402": {
+            "description": "Subscription expired"
+          },
+          "403": {
+            "description": "Not permitted (plan feature, role permission, tenant suspended...)"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        },
+        "x-saf-auth": {
+          "platform": "platform.security.read"
+        }
+      }
+    },
     "/api/admin/settings": {
       "get": {
         "summary": "Global platform settings and integration status",
@@ -6168,8 +6775,21 @@
                     "minimum": 0,
                     "maximum": 60
                   },
-                  "onlinePayments": {
-                    "type": "boolean"
+                  "upiId": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "const": ""
+                      },
+                      {
+                        "type": "string",
+                        "pattern": "^[A-Za-z0-9._-]{2,256}@[A-Za-z][A-Za-z0-9.-]{1,63}$"
+                      }
+                    ]
+                  },
+                  "upiPayeeName": {
+                    "type": "string",
+                    "maxLength": 60
                   }
                 }
               }
@@ -7362,6 +7982,70 @@
         }
       }
     },
+    "/api/admin/users/{id}/mfa-reset": {
+      "post": {
+        "summary": "Reset a user's two-step verification (lost device)",
+        "description": "**Authorization:** SAF Super Admin only.\n\nMutations require header `x-saf-request: 1` (CSRF guard).",
+        "tags": [
+          "security"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "402": {
+            "description": "Subscription expired"
+          },
+          "403": {
+            "description": "Not permitted (plan feature, role permission, tenant suspended...)"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        },
+        "x-saf-auth": {
+          "platform": "platform.security.manage",
+          "elevated": true
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "reason": {
+                    "type": "string",
+                    "minLength": 5,
+                    "maxLength": 300
+                  }
+                },
+                "required": [
+                  "reason"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/admin/users/{id}/reset-password": {
       "post": {
         "summary": "Issue a new temporary password",
@@ -7540,7 +8224,8 @@
         },
         "x-saf-auth": {
           "session": true,
-          "allowPasswordChange": true
+          "allowPasswordChange": true,
+          "allowMfaEnrollment": true
         },
         "requestBody": {
           "required": true,
@@ -7778,7 +8463,9 @@
         },
         "x-saf-auth": {
           "session": true,
-          "allowPasswordChange": true
+          "allowPasswordChange": true,
+          "allowMfaEnrollment": true,
+          "allowMfaPending": true
         }
       }
     },
@@ -7812,7 +8499,296 @@
         },
         "x-saf-auth": {
           "session": true,
-          "allowPasswordChange": true
+          "allowPasswordChange": true,
+          "allowMfaEnrollment": true
+        }
+      }
+    },
+    "/api/auth/mfa": {
+      "get": {
+        "summary": "Your two-step verification status",
+        "description": "**Authorization:** Any signed-in user.",
+        "tags": [
+          "auth"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "402": {
+            "description": "Subscription expired"
+          },
+          "403": {
+            "description": "Not permitted (plan feature, role permission, tenant suspended...)"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        },
+        "x-saf-auth": {
+          "session": true,
+          "allowMfaEnrollment": true
+        }
+      }
+    },
+    "/api/auth/mfa/disable": {
+      "post": {
+        "summary": "Turn two-step verification off (not allowed where it is required)",
+        "description": "**Authorization:** Any signed-in user.\n\nMutations require header `x-saf-request: 1` (CSRF guard).",
+        "tags": [
+          "auth"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "402": {
+            "description": "Subscription expired"
+          },
+          "403": {
+            "description": "Not permitted (plan feature, role permission, tenant suspended...)"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        },
+        "x-saf-auth": {
+          "session": true
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "code": {
+                    "type": "string",
+                    "minLength": 6,
+                    "maxLength": 20
+                  }
+                },
+                "required": [
+                  "code"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/mfa/enable": {
+      "post": {
+        "summary": "Confirm the authenticator code and turn two-step verification on",
+        "description": "**Authorization:** Any signed-in user.\n\nMutations require header `x-saf-request: 1` (CSRF guard).",
+        "tags": [
+          "auth"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "402": {
+            "description": "Subscription expired"
+          },
+          "403": {
+            "description": "Not permitted (plan feature, role permission, tenant suspended...)"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        },
+        "x-saf-auth": {
+          "session": true,
+          "allowMfaEnrollment": true
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "code": {
+                    "type": "string",
+                    "minLength": 6,
+                    "maxLength": 20
+                  }
+                },
+                "required": [
+                  "code"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/mfa/recovery-codes": {
+      "post": {
+        "summary": "Replace your recovery codes (old ones stop working)",
+        "description": "**Authorization:** Any signed-in user.\n\nMutations require header `x-saf-request: 1` (CSRF guard).",
+        "tags": [
+          "auth"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "402": {
+            "description": "Subscription expired"
+          },
+          "403": {
+            "description": "Not permitted (plan feature, role permission, tenant suspended...)"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        },
+        "x-saf-auth": {
+          "session": true
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "code": {
+                    "type": "string",
+                    "minLength": 6,
+                    "maxLength": 20
+                  }
+                },
+                "required": [
+                  "code"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/mfa/setup": {
+      "post": {
+        "summary": "Start setting up an authenticator app (returns the QR code)",
+        "description": "**Authorization:** Any signed-in user.\n\nMutations require header `x-saf-request: 1` (CSRF guard).",
+        "tags": [
+          "auth"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "402": {
+            "description": "Subscription expired"
+          },
+          "403": {
+            "description": "Not permitted (plan feature, role permission, tenant suspended...)"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        },
+        "x-saf-auth": {
+          "session": true,
+          "allowMfaEnrollment": true
+        }
+      }
+    },
+    "/api/auth/mfa/verify": {
+      "post": {
+        "summary": "Finish signing in with an authenticator or recovery code",
+        "description": "**Authorization:** Any signed-in user.\n\nMutations require header `x-saf-request: 1` (CSRF guard).",
+        "tags": [
+          "auth"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "402": {
+            "description": "Subscription expired"
+          },
+          "403": {
+            "description": "Not permitted (plan feature, role permission, tenant suspended...)"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        },
+        "x-saf-auth": {
+          "session": true,
+          "allowMfaPending": true,
+          "allowPasswordChange": true,
+          "allowMfaEnrollment": true
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "code": {
+                    "type": "string",
+                    "minLength": 6,
+                    "maxLength": 20
+                  }
+                },
+                "required": [
+                  "code"
+                ]
+              }
+            }
+          }
         }
       }
     },
@@ -7864,6 +8840,60 @@
                 "required": [
                   "email"
                 ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/step-up": {
+      "post": {
+        "summary": "Confirm it is you before a sensitive action (authenticator code, or password when MFA is off)",
+        "description": "**Authorization:** Any signed-in user.\n\nMutations require header `x-saf-request: 1` (CSRF guard).",
+        "tags": [
+          "auth"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "402": {
+            "description": "Subscription expired"
+          },
+          "403": {
+            "description": "Not permitted (plan feature, role permission, tenant suspended...)"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        },
+        "x-saf-auth": {
+          "session": true
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "code": {
+                    "type": "string",
+                    "maxLength": 20
+                  },
+                  "password": {
+                    "type": "string",
+                    "maxLength": 200
+                  }
+                }
               }
             }
           }
@@ -15575,7 +16605,7 @@
     },
     "/api/docs/openapi.json": {
       "get": {
-        "summary": "OpenAPI 3.1 description of this API",
+        "summary": "OpenAPI 3.1 description of this API (not served in production unless PUBLIC_API_DOCS=1)",
         "description": "**Authorization:** Public (no session).",
         "tags": [
           "system"
@@ -15685,8 +16715,40 @@
       }
     },
     "/api/jobs/renewals": {
+      "get": {
+        "summary": "Same job for Vercel Cron (GET with Authorization: Bearer <CRON_SECRET>).",
+        "description": "**Authorization:** Public (no session).",
+        "tags": [
+          "system"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "402": {
+            "description": "Subscription expired"
+          },
+          "403": {
+            "description": "Not permitted (plan feature, role permission, tenant suspended...)"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        },
+        "security": [],
+        "x-saf-auth": {
+          "public": true
+        }
+      },
       "post": {
-        "summary": "Scheduled renewal job (expire lapsed subscriptions, raise renewal invoices, send reminders). Requires x-cron-secret.",
+        "summary": "Scheduled renewal job (expire lapsed subscriptions, raise renewal invoices, send reminders). Requires the cron secret.",
         "description": "**Authorization:** Public (no session).",
         "tags": [
           "system"
@@ -15748,7 +16810,8 @@
         },
         "x-saf-auth": {
           "session": true,
-          "allowPasswordChange": true
+          "allowPasswordChange": true,
+          "allowMfaEnrollment": true
         }
       }
     },
@@ -20079,12 +21142,12 @@
         }
       }
     },
-    "/api/webhooks/cashfree": {
-      "post": {
-        "summary": "Cashfree payment webhook (PAYMENT_SUCCESS_WEBHOOK)",
+    "/api/well-known/assetlinks": {
+      "get": {
+        "summary": "Digital Asset Links for the Android app",
         "description": "**Authorization:** Public (no session).",
         "tags": [
-          "billing"
+          "system"
         ],
         "parameters": [],
         "responses": {

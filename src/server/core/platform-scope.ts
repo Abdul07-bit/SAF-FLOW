@@ -112,7 +112,7 @@ export function tenantsWith(scope: PlatformScope, perm: string): string[] | null
 // Route targets: which business a platform route acts on
 // ---------------------------------------------------------------------------
 
-export type PlatformTarget = "business" | "subscription" | "user" | "invoice" | "ticket" | "bodyTenant" | "bodyInvoice";
+export type PlatformTarget = "business" | "subscription" | "user" | "invoice" | "ticket" | "bodyTenant" | "bodyInvoice" | "payment";
 
 export async function resolveTarget(
   db: Tx,
@@ -146,6 +146,10 @@ export async function resolveTarget(
       if (!body?.tenantId) return null;
       const t = await db.tenant.findUnique({ where: { id: body.tenantId }, select: { id: true } });
       return t ? { tenantId: t.id, product: body.productCode ?? null } : null;
+    }
+    case "payment": {
+      const p = await db.payment.findUnique({ where: { id: params.id }, select: { tenantId: true, invoice: { select: { productCode: true } } } });
+      return p ? { tenantId: p.tenantId, product: p.invoice?.productCode ?? null } : null;
     }
     case "bodyInvoice": {
       if (!body?.invoiceId) return null;

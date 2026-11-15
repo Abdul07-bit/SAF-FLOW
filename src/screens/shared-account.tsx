@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { ImageUp, Mail, MessageCircle, Phone, Plus, Send } from "lucide-react";
+import { Copy, ImageUp, Mail, MessageCircle, Phone, Plus, Send, Smartphone } from "lucide-react";
 import type { ProductCode } from "@/config/catalog";
 import { fmtDate, fmtDateTime } from "@/lib/dates";
 import { formatINR } from "@/lib/money";
@@ -11,7 +11,7 @@ import { branches } from "@/shared/resources";
 import { FieldInput, FormModal, ResourcePage, toDisplay, toWire } from "@/components/forms";
 import { PlanCompare, type FeatureRow, type PlanInfo } from "@/components/plan-compare";
 import { useProduct, type SubscriptionInfo } from "@/components/product-context";
-import { Badge, Button, Card, DataTable, Empty, Field, KeyValue, Loadable, Notice, PageHeader, StatusBadge, Textarea, toast, useAction } from "@/components/ui";
+import { Badge, Button, Card, DataTable, Empty, Field, Input, KeyValue, Loadable, Modal, Notice, PageHeader, StatusBadge, Textarea, toast, useAction } from "@/components/ui";
 
 export function BranchesScreen() {
   const p = useProduct();
@@ -129,70 +129,91 @@ interface SubData {
   features: FeatureRow[];
   invoices: any[];
   events: any[];
-  onlinePayments: boolean;
+  upiPayments: boolean;
   gstRateBp: number;
   support: { phone: string; email: string; whatsapp: string };
 }
 
-function loadCashfree(): Promise<void> {
-  return new Promise((resolve, reject) => {
-    if ((window as any).Cashfree) return resolve();
-    const s = document.createElement("script");
-    s.src = "https://sdk.cashfree.com/js/v3/cashfree.js";
-    s.onload = () => resolve();
-    s.onerror = () => reject(new Error("Could not load the payment window. Check your connection."));
-    document.body.appendChild(s);
-  });
-}
+interface UpiInfo { upiId: string; payeeName: string; amount: number; invoiceNo: string; link: string; qr: string }
 
-const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+/** Pay a SAF invoice by UPI, then upload the screenshot + UPI reference for SAF to verify. */
+function UpiPayModal({ invoice, base, onClose, onDone }: { invoice: any | null; base: string; onClose: () => void; onDone: () => void }) {
+  const info = useApi<UpiInfo>(invoice ? `${base}/billing/invoices/${invoice.id}/upi` : null);
+  const [utr, setUtr] = useState("");
+  const [file, setFile] = useState<File | null>(null);
+  const [preview, setPreview] = useState<string | null>(null);
+  const [busy, run] = useAction();
+
+  useEffect(() => { setUtr(""); setFile(null); }, [invoice?.id]);
+  useEffect(() => {
+    if (!file) { setPreview(null); return; }
+    const url = URL.createObjectURL(file);
+    setPreview(url);
+    return () => URL.revokeObjectURL(url);
+  }, [file]);
+
+  const copy = async (text: string) => {
+    try { await navigator.clipboard.writeText(text); toast("UPI ID copied"); } catch { toast("Copy failed: select the UPI ID and copy it", "info"); }
+  };
+
+  const submit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!file) return toast("Attach the payment screenshot", "bad");
+    void run(async () => {
+      const form = new FormData();
+      form.append("utr", utr.trim());
+      form.append("file", file);
+      await api(`${base}/billing/invoices/${invoice.id}/receipt`, { method: "POST", form });
+      onDone();
+    }, "Receipt sent. SmartAutoFlex will verify it shortly.");
+  };
+
+  return (
+    <Modal open={!!invoice} title={invoice ? `Pay invoice ${invoice.invoiceNo}` : "Pay"} onClose={onClose} size="lg">
+      <Loadable state={info}>
+        {(u) => (
+          <div className="grid gap-6 md:grid-cols-2">
+            <div className="text-center">
+              <p className="text-sm font-semibold text-slate-900">1. Pay {formatINR(u.amount)} by UPI</p>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={u.qr} alt={`UPI QR code to pay ${formatINR(u.amount)} to ${u.payeeName}`} className="mx-auto mt-3 h-56 w-56 rounded-lg border border-slate-200 bg-white p-2" />
+              <p className="mt-2 text-xs text-slate-500">Scan with Google Pay, PhonePe, Paytm or any UPI app. The amount is filled in.</p>
+              <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-left text-sm">
+                <p className="text-xs text-slate-500">Pay to</p>
+                <p className="font-medium text-slate-900">{u.payeeName}</p>
+                <p className="mt-1 flex items-center justify-between gap-2">
+                  <span className="break-all font-mono text-[13px] text-slate-800">{u.upiId}</span>
+                  <Button size="sm" variant="ghost" onClick={() => void copy(u.upiId)} aria-label="Copy UPI ID"><Copy className="h-4 w-4" /></Button>
+                </p>
+                <p className="mt-1 text-xs text-slate-500">Amount {formatINR(u.amount)} · Note {u.invoiceNo}</p>
+              </div>
+              <a href={u.link} className="mt-3 inline-flex items-center gap-1.5 text-sm font-medium text-brand underline md:hidden"><Smartphone className="h-4 w-4" /> Open UPI app on this phone</a>
+            </div>
+            <form onSubmit={submit} className="space-y-3">
+              <p className="text-sm font-semibold text-slate-900">2. Send us the receipt</p>
+              <Field label="UPI reference / UTR number" required help="12-digit number shown in your UPI app after payment (UPI Ref No. / UTR).">
+                <Input required value={utr} onChange={(e) => setUtr(e.target.value)} inputMode="text" autoComplete="off" pattern="[A-Za-z0-9 ]{6,40}" maxLength={40} placeholder="e.g. 431245678901" />
+              </Field>
+              <Field label="Payment screenshot" required help="PNG or JPEG, up to 2 MB.">
+                <input type="file" accept="image/png,image/jpeg" required onChange={(e) => setFile(e.target.files?.[0] ?? null)} className="block w-full text-sm text-slate-700 file:mr-3 file:rounded-md file:border-0 file:bg-slate-100 file:px-3 file:py-1.5 file:text-sm file:font-medium" />
+              </Field>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              {preview && <img src={preview} alt="Selected receipt" className="max-h-48 rounded-lg border border-slate-200 object-contain" />}
+              <Button type="submit" variant="primary" loading={busy} className="w-full">Submit receipt</Button>
+              <p className="text-xs text-slate-500">Your invoice is marked paid once SmartAutoFlex confirms the money has arrived.</p>
+            </form>
+          </div>
+        )}
+      </Loadable>
+    </Modal>
+  );
+}
 
 export function SubscriptionScreen() {
   const p = useProduct();
   const data = useApi<SubData>(`${p.base}/subscription`);
   const [request, setRequest] = useState<string | null>(null);
-  const [busy, run] = useAction();
-
-  /**
-   * Asks the server to read the order from Cashfree. A just-finished payment can
-   * take a few seconds to show as PAID, so retry briefly before giving up.
-   */
-  const confirm = async (orderId: string, tries: number) => {
-    for (let i = 0; i < tries; i++) {
-      const r = await api<{ status: string }>(`${p.base}/billing/cashfree/confirm`, { body: { orderId } });
-      if (r.status === "PAID") {
-        toast("Payment received. Thank you!");
-        await Promise.all([data.reload(), p.reload()]);
-        return true;
-      }
-      if (i < tries - 1) await wait(2500);
-    }
-    return false;
-  };
-
-  // Back from a Cashfree redirect (in-app browsers cannot use the popup).
-  useEffect(() => {
-    const url = new URL(window.location.href);
-    const orderId = url.searchParams.get("cf_order");
-    if (!orderId) return;
-    url.searchParams.delete("cf_order");
-    window.history.replaceState(null, "", url.toString());
-    void run(async () => {
-      if (!(await confirm(orderId, 4))) toast("We have not received this payment yet. If money left your account, it will show here once the bank confirms.", "info");
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  const payOnline = (invoice: any) => run(async () => {
-    const order = await api<{ orderId: string; paymentSessionId: string; mode: "sandbox" | "production" }>(`${p.base}/billing/invoices/${invoice.id}/checkout`, { method: "POST" });
-    await loadCashfree();
-    const cashfree = (window as any).Cashfree({ mode: order.mode });
-    const result = await cashfree.checkout({ paymentSessionId: order.paymentSessionId, redirectTarget: "_modal" });
-    if (result?.redirect) return; // the page is navigating to Cashfree; the return URL confirms it
-    // Never trust the browser result: the server checks the order with Cashfree.
-    const paid = await confirm(order.orderId, result?.paymentDetails ? 4 : 1);
-    if (!paid && result?.paymentDetails) toast("Payment is being confirmed by the bank. This page will update once it is received.", "info");
-  });
+  const [paying, setPaying] = useState<any | null>(null);
 
   return (
     <>
@@ -248,10 +269,18 @@ export function SubscriptionScreen() {
                     { key: "desc", label: "Description", render: (r) => <span className="block max-w-sm whitespace-normal">{r.description}{r.periodEnd && <span className="block text-xs text-slate-500">{fmtDate(r.periodStart)} to {fmtDate(r.periodEnd)}</span>}</span> },
                     { key: "total", label: "Total (incl. GST)", align: "right", render: (r) => formatINR(r.total) },
                     { key: "st", label: "Status", render: (r) => <StatusBadge value={r.status} label={r.status === "ISSUED" ? (r.paidAmount ? "Part paid" : "Unpaid") : undefined} /> },
-                    { key: "act", label: "", align: "right", render: (r) => r.status === "ISSUED" && d.onlinePayments && <Button size="sm" variant="primary" loading={busy} onClick={() => payOnline(r)}>Pay {formatINR(r.total - r.paidAmount)}</Button> },
+                    { key: "act", label: "", align: "right", render: (r) => r.status !== "ISSUED" ? null
+                      : r.receipt?.status === "PENDING" ? <Badge tone="warn">Receipt sent - verifying</Badge>
+                      : d.upiPayments && <Button size="sm" variant="primary" onClick={() => setPaying(r)}>Pay {formatINR(r.total - r.paidAmount)}</Button> },
                   ]}
                 />
-                {!d.onlinePayments && due.length > 0 && <p className="border-t border-slate-100 px-4 py-2.5 text-xs text-slate-600">To pay, contact SmartAutoFlex support. Your payment will be recorded against the invoice.</p>}
+                {d.invoices.filter((i) => i.status === "ISSUED" && i.receipt?.status === "FAILED").map((i) => (
+                  <div key={i.id} className="border-t border-slate-100 px-4 py-2.5">
+                    <Notice tone="bad" title={`Receipt for ${i.invoiceNo} was not accepted`}>{i.receipt.reviewNote} Please check the payment and upload the receipt again, or contact support.</Notice>
+                  </div>
+                ))}
+                {d.upiPayments && due.length > 0 && <p className="border-t border-slate-100 px-4 py-2.5 text-xs text-slate-600">Pay by any UPI app, then upload the payment screenshot. SmartAutoFlex verifies it, usually within one working day, and your invoice is marked paid.</p>}
+                {!d.upiPayments && due.length > 0 && <p className="border-t border-slate-100 px-4 py-2.5 text-xs text-slate-600">To pay, contact SmartAutoFlex support. Your payment will be recorded against the invoice.</p>}
               </Card>
 
               <div>
@@ -262,6 +291,7 @@ export function SubscriptionScreen() {
           );
         }}
       </Loadable>
+      <UpiPayModal invoice={paying} base={p.base} onClose={() => setPaying(null)} onDone={() => { setPaying(null); void data.reload(); }} />
       <FormModal
         open={!!request} title={request === "UPGRADE" ? "Request an upgrade" : request === "RENEWAL" ? "Request renewal" : request === "DOWNGRADE" ? "Request a downgrade" : "Change billing cycle"}
         fields={{

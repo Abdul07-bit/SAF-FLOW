@@ -26,7 +26,7 @@ Tick these before each production release, plus the "Go-live" section once. `[x]
 ## Go-live (one-time, needs production access)
 - [ ] `APP_URL` is the `https://` address; TLS terminates at nginx or the load balancer (modern TLS only: 1.2+, prefer 1.3)
 - [ ] `SAF_APP_SECRET` set to 48+ random characters in the secret store (**not** in a file on a developer machine)
-- [ ] `CRON_SECRET`, database passwords, `SUPABASE_SECRET_KEY`, `CASHFREE_CLIENT_SECRET`: unique per environment and stored in the secret store
+- [ ] `CRON_SECRET`, database passwords, `SUPABASE_SECRET_KEY`: unique per environment and stored in the secret store
 - [ ] `DATABASE_URL` uses **`saf_app`** (not `saf_owner`/`postgres`) with `sslmode=require`; the database port is not reachable from the internet
 - [ ] **If the database is on Supabase:** create the `saf_app` role there (`deploy/postgres-init/01-roles.sh` statements), run migrations as `postgres`, point `DATABASE_URL` at `saf_app.<project-ref>`, and confirm the Data API cannot reach SAF tables:
       `SELECT has_table_privilege('anon','public.users','SELECT'), has_table_privilege('anon','public._prisma_migrations','SELECT');` → both `false`
@@ -35,7 +35,7 @@ Tick these before each production release, plus the "Go-live" section once. `[x]
 - [ ] `SAF_MFA_REQUIRED=platform,owners` (or stricter); every SAF Team member has enrolled MFA (Security Center shows N/N)
 - [ ] Upstash Redis connected (Security Center → "Shared rate limiting" ✓) when hosting on Vercel or several servers
 - [ ] `npm run security:preflight` passes with the production environment loaded
-- [ ] `CASHFREE_ENV=production` with live keys; webhook URL configured in the Cashfree dashboard as `https://<host>/api/webhooks/cashfree`
+- [ ] Global settings → UPI payments shows the correct UPI ID and account holder name; approve receipts only after the money shows in the bank
 - [ ] `STORAGE_DRIVER=s3` with a **private** bucket (no public-read policy)
 - [ ] Deploy only via the Docker image or CI build; never copy a locally built `.next/standalone` folder (it can contain a local `.env`)
 - [ ] Backups: nightly `scripts/backup.sh` (or provider PITR), **encrypted**, copied off the server, access restricted; one restore test recorded
@@ -57,4 +57,4 @@ Tick these before each production release, plus the "Go-live" section once. `[x]
 - [ ] Re-read the "Remaining findings" in `SECURITY_AUDIT_REPORT.md` and schedule the next one
 
 ## Not claimed
-- This checklist does not make SAF Flow "100% secure" and is **not** a PCI DSS attestation. Card data never touches SAF (Cashfree hosts the checkout), which keeps SAF out of most PCI scope; confirm your SAQ type with Cashfree / a QSA.
+- This checklist does not make SAF Flow "100% secure" and is **not** a PCI DSS attestation. SAF takes no card data: businesses pay by UPI in their own app, which keeps SAF out of most PCI scope; confirm your SAQ type with Cashfree / a QSA.

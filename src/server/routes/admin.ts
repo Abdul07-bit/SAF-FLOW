@@ -16,7 +16,7 @@ import { addProductToTenant, businessProfileSchema, createBusiness, newBusinessS
 import { getPlatformSettings, platformSettingsSchema, savePlatformSettings } from "../core/settings";
 import { fileUrl, saveImage } from "../core/storage";
 import { notify } from "../core/notify";
-import { cashfreeMode, isCashfreeConfigured } from "../payments/cashfree";
+import { approveReceipt, rejectReceipt } from "../payments/upi";
 
 const isoDate = z.string().refine(isISODate, "Use YYYY-MM-DD");
 const pageQuery = z.object({
@@ -703,28 +703,36 @@ route({
 
 route({
   method: "GET", path: "/admin/payments", tag: "admin", summary: "Payment history across businesses", auth: { platform: "platform.billing.read" },
-  query: pageQuery.extend({ tenantId: z.uuid().optional(), method: paymentMethodSchema.optional(), from: isoDate.optional(), to: isoDate.optional() }),
+  query: pageQuery.extend({
+    tenantId: z.uuid().optional(), method: paymentMethodSchema.optional(), from: isoDate.optional(), to: isoDate.optional(),
+    status: z.enum(["PENDING", "SUCCEEDED", "FAILED", "REFUNDED"]).optional(), receipts: z.enum(["1"]).optional(),
+  }),
   handler: async ({ db, query }) => {
     const where: Prisma.PaymentWhereInput = {
       ...(query.tenantId ? { tenantId: query.tenantId } : {}),
+      ...(query.status ? { status: query.status } : {}),
+      ...(query.receipts ? { receiptKey: { not: null } } : {}),
       ...(query.method ? { method: query.method } : {}),
       ...(query.from || query.to ? { createdAt: { ...(query.from ? { gte: startOfDayIST(query.from) } : {}), ...(query.to ? { lte: endOfDayIST(query.to) } : {}) } } : {}),
       ...(query.q ? { OR: [{ reference: { contains: query.q, mode: "insensitive" } }, { tenant: { business: { name: { contains: query.q, mode: "insensitive" } } } }] } : {}),
     };
-    const [items, total, sum] = await Promise.all([
+    const [items, total, sum, toVerify] = await Promise.all([
       db.payment.findMany({
         where, include: { tenant: { include: { business: true } }, invoice: true },
         orderBy: { createdAt: "desc" }, skip: (query.page - 1) * query.pageSize, take: query.pageSize,
       }),
       db.payment.count({ where }),
       db.payment.aggregate({ where: { ...where, status: "SUCCEEDED" }, _sum: { amount: true } }),
+      db.payment.count({ where: { status: "PENDING", receiptKey: { not: null } } }),
     ]);
     return {
-      total, collected: sum._sum.amount ?? 0,
+      total, collected: sum._sum.amount ?? 0, toVerify,
       items: items.map((p) => ({
         id: p.id, amount: p.amount, method: p.method, status: p.status, reference: p.reference, paidAt: p.paidAt,
         createdAt: p.createdAt, notes: p.notes, tenantId: p.tenantId, business: p.tenant.business?.name, code: p.tenant.code,
         invoiceNo: p.invoice?.invoiceNo, invoiceKind: p.invoice?.kind, productCode: p.invoice?.productCode,
+        invoiceTotal: p.invoice?.total, invoiceStatus: p.invoice?.status,
+        receiptUrl: fileUrl(p.receiptKey), reviewNote: p.reviewNote, reviewedAt: p.reviewedAt,
       })),
     };
   },
@@ -742,6 +750,28 @@ route({
     await ctx.audit("admin.payment.record", { type: "payment", id: p.id, tenantId: p.tenantId }, { amount: p.amount, method: p.method });
     ctx.status = 201;
     return p;
+  },
+});
+
+route({
+  method: "POST", path: "/admin/payments/:id/approve", tag: "admin",
+  summary: "Approve a UPI receipt after checking the bank statement: settles the invoice", auth: { platform: "platform.billing.manage", target: "payment" }, stepUp: true,
+  body: z.object({ amount: z.number().int().min(1).optional(), note: z.string().max(300).optional() }),
+  handler: async (ctx) => {
+    const p = await approveReceipt(ctx.db, ctx.params.id, ctx.user, ctx.body);
+    await ctx.audit("admin.payment.approve", { type: "payment", id: p.id, tenantId: p.tenantId }, { amount: p.amount, reference: p.reference });
+    return p;
+  },
+});
+
+route({
+  method: "POST", path: "/admin/payments/:id/reject", tag: "admin",
+  summary: "Reject a UPI receipt (payment not received or wrong amount); the business can upload again", auth: { platform: "platform.billing.manage", target: "payment" },
+  body: z.object({ reason: z.string().trim().min(3).max(300) }),
+  handler: async (ctx) => {
+    const p = await rejectReceipt(ctx.db, ctx.params.id, ctx.body.reason);
+    await ctx.audit("admin.payment.reject", { type: "payment", id: p.id, tenantId: p.tenantId }, { reason: ctx.body.reason, reference: p.reference });
+    return { ok: true };
   },
 });
 
@@ -864,8 +894,6 @@ route({
   handler: async ({ db }) => ({
     settings: await getPlatformSettings(db),
     integrations: {
-      cashfree: isCashfreeConfigured(),
-      cashfreeMode: cashfreeMode(),
       storage: process.env.STORAGE_DRIVER === "s3" ? "S3-compatible" : "Local disk",
       appUrl: process.env.APP_URL || "",
       cronConfigured: !!process.env.CRON_SECRET && process.env.CRON_SECRET !== "change-me",
@@ -931,6 +959,10 @@ route({
       db.session.count({ where: { revokedAt: null, expiresAt: { gt: now } } }),
       identityCheck(),
     ]);
+    const [settings, toVerify] = await Promise.all([
+      getPlatformSettings(db),
+      db.payment.count({ where: { status: "PENDING", receiptKey: { not: null } } }),
+    ]);
 
     const cronConfigured = !!process.env.CRON_SECRET && process.env.CRON_SECRET !== "change-me";
     const renewalAgeH = lastRenewal ? (now.getTime() - lastRenewal.createdAt.getTime()) / 3_600_000 : null;
@@ -946,11 +978,11 @@ route({
         : renewalAgeH === null ? { status: "warn", detail: "The renewal job has never run." }
         : renewalAgeH > 36 ? { status: "warn", detail: `Last run ${Math.round(renewalAgeH)} hours ago; it should run daily.` }
         : { status: "ok", detail: `Last run ${Math.max(1, Math.round(renewalAgeH))} hours ago.` },
-      payments: !isCashfreeConfigured()
-        ? { status: "warn", detail: "Cashfree not configured: businesses can only pay offline." }
-        : cashfreeMode() === "sandbox" && process.env.NODE_ENV === "production"
-          ? { status: "warn", detail: "Cashfree keys are in sandbox mode: set CASHFREE_ENV=production to take real payments." }
-          : { status: "ok", detail: `Cashfree configured (${cashfreeMode()}).` },
+      payments: !settings.upiId
+        ? { status: "warn", detail: "No UPI ID set (Global settings): businesses cannot pay invoices themselves." }
+        : toVerify > 0
+          ? { status: "warn", detail: `UPI ${settings.upiId}. ${toVerify} receipt(s) waiting for verification under Payments.` }
+          : { status: "ok", detail: `UPI ${settings.upiId}; no receipts waiting.` },
       appUrl: (process.env.APP_URL || "").startsWith("https://")
         ? { status: "ok", detail: process.env.APP_URL! }
         : { status: process.env.NODE_ENV === "production" ? "down" : "warn", detail: `${process.env.APP_URL || "APP_URL not set"}: use https in production (secure cookies, invite links).` },

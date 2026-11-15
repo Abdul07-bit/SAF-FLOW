@@ -28,9 +28,6 @@ SAF_ADMIN_USERNAME=saf@admin
 SAF_ADMIN_PASSWORD=                 # empty: a temporary password is generated and printed once
 
 # Optional: online payments
-CASHFREE_CLIENT_ID=
-CASHFREE_CLIENT_SECRET=
-CASHFREE_ENV=production
 ```
 
 Notes:
@@ -145,28 +142,16 @@ Do not run production over plain HTTP: sessions and passwords would travel unenc
 - `POST /api/jobs/renewals` is blocked at Nginx; the `cron` container calls it
   on the internal network every 6 hours with `CRON_SECRET`.
 
-## 6. Payments (Cashfree)
+## 6. Payments (UPI)
 
-Optional. Without keys, businesses see their invoices and the Super Admin
-records payments manually (cash, UPI, bank transfer, cheque).
-
-1. In the Cashfree dashboard (Developers > API Keys) copy the **App ID** and
-   **Secret Key** into `CASHFREE_CLIENT_ID` and `CASHFREE_CLIENT_SECRET`.
-   Use test keys with `CASHFREE_ENV=sandbox`, live keys with `CASHFREE_ENV=production`.
-2. Whitelist your domain (e.g. `saf.example.com`) in the Cashfree dashboard;
-   the checkout popup refuses to open on domains that are not whitelisted.
-3. Add a payment webhook to `https://saf.example.com/api/webhooks/cashfree`
-   for the **Payment Success** event. Webhooks are signed with the same Secret
-   Key, so no extra secret is needed. Orders also send this URL as `notify_url`
-   whenever `APP_URL` is https.
-4. Restart the app. **Settings** and **System health** show whether the
-   integration is configured and in which mode.
-
-The browser's checkout result is never trusted. A payment is settled only when
-the server reads the order back from Cashfree (status `PAID`, amount equal to
-the order) or receives a webhook whose signature (base64 HMAC-SHA256 of
-timestamp + raw body) verifies. The webhook covers customers who close the
-browser before returning. Settlement is idempotent per order.
+There is no payment gateway. Set the UPI ID and account holder name in
+**Super Admin → Settings → UPI payments**. Businesses see a QR code with the
+invoice amount filled in, pay from any UPI app and upload the screenshot plus
+the UPI reference (UTR). Check the money arrived in the bank, then approve it
+under **Payments → To verify**: the invoice is marked paid and the
+subscription renews. Rejected receipts show the reason to the business, who can
+upload again. Receipts are stored privately and served only through signed,
+expiring links.
 
 ## 7. File storage
 

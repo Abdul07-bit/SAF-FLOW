@@ -23,7 +23,7 @@ Each endpoint declares exactly one policy, enforced by the router before the han
 - **Tenant user of a product** - checks, in order: business active, product subscribed, subscription usable,
   the user has a role in that product, the plan (or a per-business override) includes the feature, the role grants the permission.
 
-299 endpoints.
+319 endpoints.
 
 ## Authentication & session
 
@@ -35,7 +35,14 @@ Each endpoint declares exactly one policy, enforced by the router before the han
 | POST | `/api/auth/login` | Sign in with email or login ID and password | Public (no session). |
 | POST | `/api/auth/logout` | Sign out (revokes the session) | Any signed-in user. |
 | POST | `/api/auth/logout-all` | Sign out of every device (revokes all sessions) | Any signed-in user. |
+| GET | `/api/auth/mfa` | Your two-step verification status | Any signed-in user. |
+| POST | `/api/auth/mfa/disable` | Turn two-step verification off (not allowed where it is required) | Any signed-in user. |
+| POST | `/api/auth/mfa/enable` | Confirm the authenticator code and turn two-step verification on | Any signed-in user. |
+| POST | `/api/auth/mfa/recovery-codes` | Replace your recovery codes (old ones stop working) | Any signed-in user. |
+| POST | `/api/auth/mfa/setup` | Start setting up an authenticator app (returns the QR code) | Any signed-in user. |
+| POST | `/api/auth/mfa/verify` | Finish signing in with an authenticator or recovery code | Any signed-in user. |
 | POST | `/api/auth/password-reset` | Email a password-reset link (email accounts). Always answers the same way. | Public (no session). |
+| POST | `/api/auth/step-up` | Confirm it is you before a sensitive action (authenticator code, or password when MFA is off) | Any signed-in user. |
 | GET | `/api/me` | Current user, business and subscribed SAF products | Any signed-in user. |
 | GET | `/api/me/notifications` | In-app notifications for the current user | Any signed-in user. |
 | POST | `/api/me/notifications/read-all` | Mark all notifications read | Any signed-in user. |
@@ -69,6 +76,8 @@ Each endpoint declares exactly one policy, enforced by the router before the han
 | GET | `/api/admin/overview` | Super Admin dashboard metrics | SAF Super Admin only. |
 | GET | `/api/admin/payments` | Payment history across businesses | SAF Super Admin only. |
 | POST | `/api/admin/payments` | Record a manual payment against an invoice | SAF Super Admin only. |
+| POST | `/api/admin/payments/:id/approve` | Approve a UPI receipt after checking the bank statement: settles the invoice | SAF Super Admin only. |
+| POST | `/api/admin/payments/:id/reject` | Reject a UPI receipt (payment not received or wrong amount); the business can upload again | SAF Super Admin only. |
 | GET | `/api/admin/plans` | Plans and pricing for every product | SAF Super Admin only. |
 | PATCH | `/api/admin/plans/:id` | Change plan pricing (per product) | SAF Super Admin only. |
 | PUT | `/api/admin/plans/:id/features/:key` | Include or exclude a feature in a plan | SAF Super Admin only. |
@@ -98,6 +107,7 @@ Each endpoint declares exactly one policy, enforced by the router before the han
 | GET | `/api/:product/team` | Staff login accounts with access to this product | Tenant user of the product in the URL with a usable subscription; plan feature: staff_logins; role permission: staff.manage. |
 | POST | `/api/:product/team` | Create an employee login ID with product roles | Tenant user of the product in the URL with a usable subscription; plan feature: staff_logins; role permission: staff.manage. |
 | PATCH | `/api/:product/team/:userId` | Edit a staff member and change product roles | Tenant user of the product in the URL with a usable subscription; plan feature: staff_logins; role permission: staff.manage. |
+| POST | `/api/:product/team/:userId/mfa-reset` | Owner only: reset a staff member's two-step verification (lost phone) | Tenant user of the product in the URL with a usable subscription; plan feature: staff_logins; role permission: staff.manage. |
 | POST | `/api/:product/team/:userId/resend-invite` | Send a fresh invitation to a staff member who has not accepted yet | Tenant user of the product in the URL with a usable subscription; plan feature: staff_logins; role permission: staff.manage. |
 | POST | `/api/:product/team/:userId/reset-password` | Reset a staff password (issues a temporary password) | Tenant user of the product in the URL with a usable subscription; plan feature: staff_logins; role permission: staff.manage. |
 | POST | `/api/:product/team/:userId/status` | Enable or disable a staff account | Tenant user of the product in the URL with a usable subscription; plan feature: staff_logins; role permission: staff.manage. |
@@ -150,13 +160,12 @@ Each endpoint declares exactly one policy, enforced by the router before the han
 
 | Method | Path | Summary | Authorization |
 |---|---|---|---|
-| POST | `/api/:product/billing/cashfree/confirm` | Confirm a Cashfree checkout: the server reads the order from Cashfree and settles it when PAID | Tenant user of the product in the URL with a usable subscription (expired/suspended allowed); role permission: subscription.view. |
-| POST | `/api/:product/billing/invoices/:id/checkout` | Start an online (Cashfree) payment for a SAF invoice | Tenant user of the product in the URL with a usable subscription (expired/suspended allowed); role permission: subscription.view. |
+| POST | `/api/:product/billing/invoices/:id/receipt` | Upload a UPI payment receipt (screenshot + UPI reference) for SAF to verify | Tenant user of the product in the URL with a usable subscription (expired/suspended allowed); role permission: subscription.view. |
+| GET | `/api/:product/billing/invoices/:id/upi` | UPI payment details for a SAF invoice: SAF's UPI ID, amount due and a scannable QR code | Tenant user of the product in the URL with a usable subscription (expired/suspended allowed); role permission: subscription.view. |
 | GET | `/api/:product/subscription` | Subscription, plan comparison and SAF invoices for this product | Tenant user of the product in the URL with a usable subscription (expired/suspended allowed); role permission: subscription.view. |
 | POST | `/api/:product/subscription/request` | Request an upgrade, renewal or plan change from SAF | Tenant user of the product in the URL with a usable subscription (expired/suspended allowed); role permission: subscription.view. |
 | GET | `/api/catalog/:product` | Plans and features of a SAF product (activation / upgrade page) | Any signed-in user. |
 | POST | `/api/catalog/:product/request` | Ask SAF to activate a product for this business | Any signed-in user. |
-| POST | `/api/webhooks/cashfree` | Cashfree payment webhook (PAYMENT_SUCCESS_WEBHOOK) | Public (no session). |
 
 ## Support
 
@@ -283,10 +292,12 @@ Each endpoint declares exactly one policy, enforced by the router before the han
 
 | Method | Path | Summary | Authorization |
 |---|---|---|---|
-| GET | `/api/docs/openapi.json` | OpenAPI 3.1 description of this API | Public (no session). |
+| GET | `/api/docs/openapi.json` | OpenAPI 3.1 description of this API (not served in production unless PUBLIC_API_DOCS=1) | Public (no session). |
 | GET | `/api/files/*key` | Serve an uploaded image (logo / employee photo) | Public (no session). |
 | GET | `/api/health` | Liveness / readiness probe | Public (no session). |
-| POST | `/api/jobs/renewals` | Scheduled renewal job (expire lapsed subscriptions, raise renewal invoices, send reminders). Requires x-cron-secret. | Public (no session). |
+| GET | `/api/jobs/renewals` | Same job for Vercel Cron (GET with Authorization: Bearer <CRON_SECRET>). | Public (no session). |
+| POST | `/api/jobs/renewals` | Scheduled renewal job (expire lapsed subscriptions, raise renewal invoices, send reminders). Requires the cron secret. | Public (no session). |
+| GET | `/api/well-known/assetlinks` | Digital Asset Links for the Android app | Public (no session). |
 
 ## bill.categories
 
@@ -436,6 +447,20 @@ Each endpoint declares exactly one policy, enforced by the router before the han
 | DELETE | `/api/admin/team/:id/assignments/:tenantId` | Revoke a member's access to a business (effective immediately) | SAF Super Admin only. |
 | PUT | `/api/admin/team/:id/assignments/:tenantId` | Assign a member to a business, optionally limited to branches, modules and permissions | SAF Super Admin only. |
 | POST | `/api/admin/team/:id/resend-invite` | Send a fresh invitation to a member who has not accepted yet | SAF Super Admin only. |
+
+## security
+
+| Method | Path | Summary | Authorization |
+|---|---|---|---|
+| GET | `/api/:product/security/overview` | Your business: staff access, MFA, sessions and sign-in activity | Tenant user of the product in the URL with a usable subscription; role permission: staff.manage. |
+| GET | `/api/:product/security/sessions` | Signed-in devices of your business's accounts | Tenant user of the product in the URL with a usable subscription; role permission: staff.manage. |
+| POST | `/api/:product/security/sessions/:id/revoke` | Sign one device out | Tenant user of the product in the URL with a usable subscription; role permission: staff.manage. |
+| POST | `/api/:product/security/users/:userId/revoke-sessions` | Sign a staff member out of every device | Tenant user of the product in the URL with a usable subscription; role permission: staff.manage. |
+| GET | `/api/admin/security/events` | Security-relevant audit events across the platform | SAF Super Admin only. |
+| GET | `/api/admin/security/overview` | Platform security status, alerts and trends | SAF Super Admin only. |
+| POST | `/api/admin/security/users/:id/revoke-sessions` | Sign a user out of every device (incident response) | SAF Super Admin only. |
+| GET | `/api/admin/security/users/:id/sessions` | A user's active sessions | SAF Super Admin only. |
+| POST | `/api/admin/users/:id/mfa-reset` | Reset a user's two-step verification (lost device) | SAF Super Admin only. |
 
 ## stay.expenses
 
