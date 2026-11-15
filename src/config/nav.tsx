@@ -1,7 +1,7 @@
 import {
   BadgeCheck, BarChart3, BedDouble, Boxes, Building2, CalendarClock, CalendarDays, CalendarRange, ChefHat, ClipboardList, ConciergeBell,
   CreditCard, FileText, Fingerprint, Gauge, History, IdCard, Landmark, LayoutDashboard, LifeBuoy, LineChart, ListChecks, MonitorSmartphone,
-  Package, PackagePlus, PlusCircle, Receipt, ScanBarcode, ScrollText, Settings, ShieldCheck, ShoppingCart, SlidersHorizontal, Sparkles, Store,
+  Package, PackagePlus, PlusCircle, QrCode, Receipt, ScanBarcode, ScrollText, Settings, ShieldCheck, ShoppingCart, SlidersHorizontal, Sparkles, Store,
   Tags, Trash2, Truck, UserCog, Users, UsersRound, UtensilsCrossed, Wallet, Wrench, type LucideIcon,
 } from "lucide-react";
 import type { ProductCode } from "./catalog";
@@ -29,6 +29,7 @@ const TEAM: NavSection = {
     { slug: "team", label: "Staff logins", icon: UserCog, feature: "staff_logins", permission: "staff.manage" },
     { slug: "employees", label: "Employees", icon: UsersRound, feature: "staff_management", permission: "employees.manage" },
     { slug: "attendance", label: "Attendance", icon: CalendarClock, feature: "attendance", permission: "attendance.manage" },
+    { slug: "attendance-qr", label: "Attendance QR", icon: QrCode, feature: "staff_checkin", permission: "attendance.manage" },
     { slug: "my-attendance", label: "My attendance", icon: Fingerprint, feature: "staff_checkin", permission: "attendance.self" },
     { slug: "shifts", label: "Shifts & roster", icon: CalendarRange, feature: "shifts", permission: "shifts.manage" },
     { slug: "id-cards", label: "ID cards", icon: IdCard, feature: "id_cards", permission: "employees.manage" },

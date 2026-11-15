@@ -13,7 +13,7 @@ import { BillAdjustments, BillAnalytics, BillCounters, BillInventory, BillProduc
 import { DineAnalytics, DineInventory, DineMenu, DinePurchases, DineRecipes, DineReports, DineStockLedger, DineSuppliers, DineTables, DineWastage } from "./dine-manage";
 import { DineCashier, DineDashboard, DineKds, DineOrders, DinePos, DineWaiter } from "./dine-service";
 import { BranchesScreen, SettingsScreen, SubscriptionScreen, SupportScreen } from "./shared-account";
-import { AttendanceScreen, EmployeesScreen, IdCardsScreen, MyAttendanceScreen, ShiftsScreen, TeamScreen, VerifyScreen } from "./shared-team";
+import { AttendanceScreen, AttendanceStationScreen, EmployeesScreen, IdCardsScreen, MyAttendanceScreen, ShiftsScreen, TeamScreen, VerifyScreen } from "./shared-team";
 import { StayAvailability, StayCashier, StayDashboard, StayFrontDesk, StayInvoices, StayReservations } from "./stay-front";
 import { SecurityScreen } from "./security-center";
 import { StayAnalytics, StayExpenses, StayGuests, StayHousekeeping, StayMaintenance, StayOperations, StayReports, StayRevenue, StayRooms } from "./stay-ops";
@@ -24,6 +24,7 @@ export const SCREENS: Record<string, ScreenComponent> = {
   "*/employees": EmployeesScreen,
   "*/attendance": AttendanceScreen,
   "*/my-attendance": MyAttendanceScreen,
+  "*/attendance-qr": AttendanceStationScreen,
   "*/shifts": ShiftsScreen,
   "*/id-cards": IdCardsScreen,
   "*/verify": VerifyScreen,

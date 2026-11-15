@@ -23,7 +23,7 @@ Each endpoint declares exactly one policy, enforced by the router before the han
 - **Tenant user of a product** - checks, in order: business active, product subscribed, subscription usable,
   the user has a role in that product, the plan (or a per-business override) includes the feature, the role grants the permission.
 
-326 endpoints.
+328 endpoints.
 
 ## Authentication & session
 
@@ -133,12 +133,14 @@ Each endpoint declares exactly one policy, enforced by the router before the han
 | Method | Path | Summary | Authorization |
 |---|---|---|---|
 | GET | `/api/:product/staff/attendance` | Daily attendance sheet | Tenant user of the product in the URL with a usable subscription; plan feature: attendance; role permission: attendance.manage. |
-| POST | `/api/:product/staff/attendance/check-in` | Check in (self) | Tenant user of the product in the URL with a usable subscription; plan feature: staff_checkin; role permission: attendance.self. |
-| POST | `/api/:product/staff/attendance/check-out` | Check out (self) | Tenant user of the product in the URL with a usable subscription; plan feature: staff_checkin; role permission: attendance.self. |
+| POST | `/api/:product/staff/attendance/check-in` | Check in with the attendance QR code | Tenant user of the product in the URL with a usable subscription; plan feature: staff_checkin; role permission: attendance.self. |
+| POST | `/api/:product/staff/attendance/check-out` | Check out with the attendance QR code | Tenant user of the product in the URL with a usable subscription; plan feature: staff_checkin; role permission: attendance.self. |
 | POST | `/api/:product/staff/attendance/mark` | Mark or correct attendance (manager) | Tenant user of the product in the URL with a usable subscription; plan feature: attendance; role permission: attendance.manage. |
 | GET | `/api/:product/staff/attendance/me` | My attendance, today's shift and recent history | Tenant user of the product in the URL with a usable subscription; plan feature: staff_checkin; role permission: attendance.self. |
 | POST | `/api/:product/staff/attendance/qr` | Check a staff member in/out by scanning their ID card QR | Tenant user of the product in the URL with a usable subscription; plan feature: qr_verification; role permission: attendance.manage. |
 | GET | `/api/:product/staff/attendance/report` | Monthly attendance report (late arrivals, working hours) | Tenant user of the product in the URL with a usable subscription; plan feature: attendance; role permission: attendance.manage. |
+| POST | `/api/:product/staff/attendance/scan` | Scan the attendance QR: checks in, or out when already checked in | Tenant user of the product in the URL with a usable subscription; plan feature: staff_checkin; role permission: attendance.self. |
+| GET | `/api/:product/staff/attendance/station` | Live attendance QR for this branch (changes every 30 seconds) | Tenant user of the product in the URL with a usable subscription; plan feature: staff_checkin; role permission: attendance.manage. |
 
 ## ID cards & QR verification (Growth)
 

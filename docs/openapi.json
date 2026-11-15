@@ -1152,7 +1152,7 @@
     },
     "/api/{product}/staff/attendance/check-in": {
       "post": {
-        "summary": "Check in (self)",
+        "summary": "Check in with the attendance QR code",
         "description": "**Authorization:** Tenant user of the product in the URL with a usable subscription; plan feature: staff_checkin; role permission: attendance.self.\n\nMutations require header `x-saf-request: 1` (CSRF guard).",
         "tags": [
           "attendance"
@@ -1191,12 +1191,37 @@
           "product": ":product",
           "feature": "staff_checkin",
           "permission": "attendance.self"
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "code": {
+                    "type": "string",
+                    "pattern": "^\\d{6}$"
+                  },
+                  "branchId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  }
+                },
+                "required": [
+                  "code"
+                ]
+              }
+            }
+          }
         }
       }
     },
     "/api/{product}/staff/attendance/check-out": {
       "post": {
-        "summary": "Check out (self)",
+        "summary": "Check out with the attendance QR code",
         "description": "**Authorization:** Tenant user of the product in the URL with a usable subscription; plan feature: staff_checkin; role permission: attendance.self.\n\nMutations require header `x-saf-request: 1` (CSRF guard).",
         "tags": [
           "attendance"
@@ -1235,6 +1260,31 @@
           "product": ":product",
           "feature": "staff_checkin",
           "permission": "attendance.self"
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "code": {
+                    "type": "string",
+                    "pattern": "^\\d{6}$"
+                  },
+                  "branchId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  }
+                },
+                "required": [
+                  "code"
+                ]
+              }
+            }
+          }
         }
       }
     },
@@ -1513,6 +1563,119 @@
         "x-saf-auth": {
           "product": ":product",
           "feature": "attendance",
+          "permission": "attendance.manage"
+        }
+      }
+    },
+    "/api/{product}/staff/attendance/scan": {
+      "post": {
+        "summary": "Scan the attendance QR: checks in, or out when already checked in",
+        "description": "**Authorization:** Tenant user of the product in the URL with a usable subscription; plan feature: staff_checkin; role permission: attendance.self.\n\nMutations require header `x-saf-request: 1` (CSRF guard).",
+        "tags": [
+          "attendance"
+        ],
+        "parameters": [
+          {
+            "name": "product",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "402": {
+            "description": "Subscription expired"
+          },
+          "403": {
+            "description": "Not permitted (plan feature, role permission, tenant suspended...)"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        },
+        "x-saf-auth": {
+          "product": ":product",
+          "feature": "staff_checkin",
+          "permission": "attendance.self"
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "code": {
+                    "type": "string",
+                    "pattern": "^\\d{6}$"
+                  },
+                  "branchId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  }
+                },
+                "required": [
+                  "code"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/{product}/staff/attendance/station": {
+      "get": {
+        "summary": "Live attendance QR for this branch (changes every 30 seconds)",
+        "description": "**Authorization:** Tenant user of the product in the URL with a usable subscription; plan feature: staff_checkin; role permission: attendance.manage.",
+        "tags": [
+          "attendance"
+        ],
+        "parameters": [
+          {
+            "name": "product",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "402": {
+            "description": "Subscription expired"
+          },
+          "403": {
+            "description": "Not permitted (plan feature, role permission, tenant suspended...)"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        },
+        "x-saf-auth": {
+          "product": ":product",
+          "feature": "staff_checkin",
           "permission": "attendance.manage"
         }
       }

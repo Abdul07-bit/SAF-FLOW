@@ -7,7 +7,9 @@ import {
 } from "@/lib/dates";
 import { route, type Ctx } from "../http/router";
 import { registerCrud } from "../http/crud";
-import { badRequest, conflict, notFound } from "../http/errors";
+import { badRequest, conflict, forbidden, notFound } from "../http/errors";
+import { ATTENDANCE_WINDOW_SEC, attendanceCode, attendanceWindow, verifyAttendanceCode } from "../core/keys";
+import QRCode from "qrcode";
 import { nextSeq, withPlatform, type Tx } from "../db";
 import { token } from "../core/ids";
 import { fileUrl, saveImage, storage } from "../core/storage";
@@ -227,7 +229,7 @@ async function shiftFor(db: Tx, employeeId: string, date: ISODate) {
 }
 
 /** Check-in/out shared by self-service, QR scan and manager actions. */
-async function checkInOut(ctx: Ctx, employeeId: string, action: "in" | "out" | "auto", source: "SELF" | "QR" | "MANAGER") {
+async function checkInOut(ctx: Ctx, employeeId: string, action: "in" | "out" | "auto", source: "SELF" | "QR" | "MANAGER" | "SCAN", branchId?: string) {
   const now = new Date();
   const date = istDate(now);
   const existing = await ctx.db.staffAttendance.findUnique({ where: { employeeId_date: { employeeId, date: dateOnly(date) } } });
@@ -243,7 +245,7 @@ async function checkInOut(ctx: Ctx, employeeId: string, action: "in" | "out" | "
       if (lateMinutes > shift.graceMinutes) status = "LATE";
       else lateMinutes = 0;
     }
-    const data = { checkInAt: now, status, lateMinutes, shiftId: shift?.id ?? null, source, productCode: ctx.product, branchId: ctx.branchId || null };
+    const data = { checkInAt: now, status, lateMinutes, shiftId: shift?.id ?? null, source, productCode: ctx.product, branchId: branchId || ctx.branchId || null };
     const row = existing
       ? await ctx.db.staffAttendance.update({ where: { id: existing.id }, data })
       : await ctx.db.staffAttendance.create({ data: { ...data, tenantId: ctx.tenantId, employeeId, date: dateOnly(date) } });
@@ -279,17 +281,62 @@ route({
   },
 });
 
+/**
+ * Staff check in and out only by scanning the attendance QR on the manager's
+ * screen at the workplace (or typing its 6-digit code). The code changes every
+ * 30 seconds and is valid for about a minute, so a forwarded photo is useless.
+ */
+const scanBody = z.object({
+  code: z.string().trim().regex(/^\d{6}$/, "Enter the 6-digit code shown on the attendance screen."),
+  branchId: z.uuid().optional(),
+});
+
+async function scanCheck(ctx: Ctx, action: "in" | "out" | "auto", body: z.infer<typeof scanBody>) {
+  await ctx.limit("attendance-scan", ctx.user.id, 20, 10 * 60_000);
+  const branchId = body.branchId ?? ctx.branchId;
+  if (!ctx.access.branches.some((b) => b.id === branchId)) throw forbidden("BRANCH_ACCESS_DENIED", "This attendance QR belongs to a branch you are not assigned to.");
+  if (!verifyAttendanceCode(ctx.tenantId, branchId, ctx.product, body.code))
+    throw badRequest("This attendance code has expired or is not valid. Scan the QR on the attendance screen again.");
+  const emp = await ctx.db.employeeProfile.findFirst({ where: { userId: ctx.user.id, tenantId: ctx.tenantId, status: "ACTIVE" } });
+  if (!emp) throw badRequest("Your login is not linked to an employee record. Ask your manager.");
+  const r = await checkInOut(ctx, emp.id, action, "SCAN", branchId);
+  await ctx.audit(`attendance.check_${r.action}`, { type: "employee", id: emp.id }, { branchId, source: "scan" });
+  return { ...r, employee: { fullName: emp.fullName } };
+}
+
 for (const action of ["in", "out"] as const) {
   route({
     method: "POST", path: `/:product/staff/attendance/check-${action}`, tag: "attendance",
-    summary: action === "in" ? "Check in (self)" : "Check out (self)", auth: ATT_SELF,
-    handler: async (ctx) => {
-      const emp = await ctx.db.employeeProfile.findFirst({ where: { userId: ctx.user.id, tenantId: ctx.tenantId, status: "ACTIVE" } });
-      if (!emp) throw badRequest("Your login is not linked to an employee record. Ask your manager.");
-      return checkInOut(ctx, emp.id, action, "SELF");
-    },
+    summary: action === "in" ? "Check in with the attendance QR code" : "Check out with the attendance QR code", auth: ATT_SELF,
+    body: scanBody,
+    handler: (ctx) => scanCheck(ctx, action, ctx.body),
   });
 }
+
+route({
+  method: "POST", path: "/:product/staff/attendance/scan", tag: "attendance",
+  summary: "Scan the attendance QR: checks in, or out when already checked in", auth: ATT_SELF,
+  body: scanBody,
+  handler: (ctx) => scanCheck(ctx, "auto", ctx.body),
+});
+
+route({
+  method: "GET", path: "/:product/staff/attendance/station", tag: "attendance",
+  summary: "Live attendance QR for this branch (changes every 30 seconds)",
+  auth: { product: ":product", feature: "staff_checkin", permission: "attendance.manage" },
+  handler: async (ctx) => {
+    const now = Date.now();
+    const win = attendanceWindow(now);
+    const code = attendanceCode(ctx.tenantId, ctx.branchId, ctx.product, win);
+    const url = `${appUrl()}/attend/${ctx.product}/${ctx.branchId}/${code}`;
+    const branch = ctx.access.branches.find((b) => b.id === ctx.branchId);
+    return {
+      branch: branch?.name ?? null, code, url,
+      qr: await QRCode.toDataURL(url, { margin: 1, width: 480, errorCorrectionLevel: "M" }),
+      refreshInMs: (win + 1) * ATTENDANCE_WINDOW_SEC * 1000 - now,
+    };
+  },
+});
 
 route({
   method: "GET", path: "/:product/staff/attendance", tag: "attendance", summary: "Daily attendance sheet", auth: ATT_MANAGE,

@@ -32,7 +32,7 @@ export function appSecretConfigured(): boolean {
 }
 
 const cache = new Map<string, Buffer>();
-function derive(purpose: "mfa-encryption-v1" | "file-url-signing-v1"): Buffer {
+function derive(purpose: "mfa-encryption-v1" | "file-url-signing-v1" | "attendance-qr-v1"): Buffer {
   const m = master();
   const id = `${purpose}:${m.length}:${m.subarray(0, 4).toString("hex")}`;
   let k = cache.get(id);
@@ -61,6 +61,31 @@ export function decryptSecret(stored: string): string {
   const d = createDecipheriv("aes-256-gcm", derive("mfa-encryption-v1"), raw.subarray(0, 12), { authTagLength: TAG_BYTES });
   d.setAuthTag(raw.subarray(12, 12 + TAG_BYTES));
   return Buffer.concat([d.update(raw.subarray(28)), d.final()]).toString("utf8");
+}
+
+/** Attendance QR: a new 6-digit code every ATTENDANCE_WINDOW_SEC for each branch. */
+export const ATTENDANCE_WINDOW_SEC = 30;
+
+export function attendanceWindow(nowMs = Date.now()): number {
+  return Math.floor(nowMs / 1000 / ATTENDANCE_WINDOW_SEC);
+}
+
+/** 6 digits derived from the app secret, so nobody can compute tomorrow's (or another branch's) code. */
+export function attendanceCode(tenantId: string, branchId: string, product: string, window: number): string {
+  const mac = createHmac("sha256", derive("attendance-qr-v1")).update([tenantId, branchId, product, String(window)].join("|")).digest();
+  return String(mac.readUInt32BE(0) % 1_000_000).padStart(6, "0");
+}
+
+/** Accepts the code on screen now or the one just before it (30-60 seconds of validity). */
+export function verifyAttendanceCode(tenantId: string, branchId: string, product: string, code: string, nowMs = Date.now()): boolean {
+  if (!/^\d{6}$/.test(code)) return false;
+  const w = attendanceWindow(nowMs);
+  let ok = false;
+  for (const win of [w, w - 1]) {
+    const a = Buffer.from(attendanceCode(tenantId, branchId, product, win)), b = Buffer.from(code);
+    if (timingSafeEqual(a, b)) ok = true;
+  }
+  return ok;
 }
 
 /** HMAC signature for short-lived file URLs (base64url, 32 chars). */

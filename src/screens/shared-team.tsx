@@ -1,7 +1,7 @@
 "use client";
 
-import { useRef, useState } from "react";
-import { BadgeCheck, Camera, Copy, Download, KeyRound, LogIn, LogOut, Pencil, Plus, Printer, ShieldAlert, UserPlus } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { BadgeCheck, Camera, Copy, Download, KeyRound, Maximize2, Pencil, Plus, Printer, QrCode, ScanLine, ShieldAlert, UserPlus } from "lucide-react";
 import { PRODUCTS, type ProductCode } from "@/config/catalog";
 import { addDays, fmtDate, fmtDateTime, fmtTime, todayIST } from "@/lib/dates";
 import { api, qs, useApi } from "@/lib/client";
@@ -10,7 +10,7 @@ import { shifts } from "@/shared/resources";
 import { KpiRow, StatTile } from "@/components/charts";
 import { FormModal, ResourcePage } from "@/components/forms";
 import { useProduct } from "@/components/product-context";
-import { ScanInput } from "@/components/scanner";
+import { CameraScanner, ScanInput, cameraScanSupported } from "@/components/scanner";
 import { Badge, Button, Card, DataTable, Empty, Field, Input, Loadable, Modal, Notice, PageHeader, Select, StatusBadge, Tabs, toast, toastError, useAction } from "@/components/ui";
 
 const hours = (min: number) => (min ? `${Math.floor(min / 60)}h ${String(min % 60).padStart(2, "0")}m` : "-");
@@ -455,13 +455,35 @@ function MonthlyAttendance() {
   );
 }
 
+/** Reads the code from an attendance QR (a /attend/<product>/<branch>/<code> link). */
+function parseAttendanceQr(value: string): { branchId: string; code: string } | null {
+  const m = value.match(/\/attend\/[a-z]+\/([0-9a-f-]{36})\/(\d{6})(?:[/?#]|$)/i);
+  return m ? { branchId: m[1], code: m[2] } : null;
+}
+
 export function MyAttendanceScreen() {
   const p = useProduct();
   const me = useApi<any>(`${p.base}/staff/attendance/me`);
   const [busy, run] = useAction();
+  const [scanning, setScanning] = useState(false);
+  const [code, setCode] = useState("");
+  const [canScan, setCanScan] = useState(false);
+  useEffect(() => setCanScan(cameraScanSupported()), []);
+  const submit = (body: { code: string; branchId?: string }) => run(async () => {
+    const r = await api<{ action: "in" | "out" }>(`${p.base}/staff/attendance/scan`, { body });
+    setCode("");
+    await me.reload();
+    toast(r.action === "in" ? "Checked in" : "Checked out");
+  });
+  const onScan = (value: string) => {
+    setScanning(false);
+    const q = parseAttendanceQr(value);
+    if (!q) return toast("That is not the attendance QR. Scan the QR on the attendance screen.", "bad");
+    void submit(q);
+  };
   return (
     <>
-      <PageHeader title="My attendance" description="Check in when you start work and check out when you leave." />
+      <PageHeader title="My attendance" description="Check in when you start work and check out when you leave, by scanning the attendance QR at your workplace." />
       <Loadable state={me}>
         {(d) =>
           !d.employee ? (
@@ -472,8 +494,16 @@ export function MyAttendanceScreen() {
                 <div className="space-y-3 text-center">
                   <p className="text-sm text-slate-600">{d.today?.checkInAt ? `Checked in at ${fmtTime(d.today.checkInAt)}` : "Not checked in yet"}{d.today?.checkOutAt ? `, out at ${fmtTime(d.today.checkOutAt)}` : ""}</p>
                   {d.today && <StatusBadge value={d.today.status} />}
-                  {!d.today?.checkInAt && <Button variant="primary" size="lg" className="w-full" loading={busy} onClick={() => run(async () => { await api(`${p.base}/staff/attendance/check-in`, { method: "POST" }); await me.reload(); }, "Checked in")}><LogIn className="h-5 w-5" /> Check in</Button>}
-                  {d.today?.checkInAt && !d.today.checkOutAt && <Button variant="primary" size="lg" className="w-full" loading={busy} onClick={() => run(async () => { await api(`${p.base}/staff/attendance/check-out`, { method: "POST" }); await me.reload(); }, "Checked out")}><LogOut className="h-5 w-5" /> Check out</Button>}
+                  {!d.today?.checkOutAt && (
+                    <div className="space-y-3 rounded-lg bg-slate-50 p-3 text-left">
+                      <p className="text-sm text-slate-700">To {d.today?.checkInAt ? "check out" : "check in"}, scan the <span className="font-medium">attendance QR</span> on your manager&apos;s screen at work, with this app or your phone camera.</p>
+                      {canScan && <Button variant="primary" size="lg" className="w-full" loading={busy} onClick={() => setScanning(true)}><ScanLine className="h-5 w-5" /> Scan attendance QR</Button>}
+                      <form className="flex gap-2" onSubmit={(e) => { e.preventDefault(); if (/^\d{6}$/.test(code)) void submit({ code }); }}>
+                        <Input aria-label="6-digit attendance code" inputMode="numeric" autoComplete="one-time-code" maxLength={6} placeholder="Or type the 6-digit code" value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))} className="font-mono tracking-widest" />
+                        <Button type="submit" loading={busy} disabled={code.length !== 6}>{d.today?.checkInAt ? "Check out" : "Check in"}</Button>
+                      </form>
+                    </div>
+                  )}
                   {d.today?.checkOutAt && <p className="text-sm font-medium text-emerald-800">Done for today - {hours(d.today.workedMinutes)} worked.</p>}
                 </div>
                 {d.upcoming.length > 0 && (
@@ -483,6 +513,7 @@ export function MyAttendanceScreen() {
                   </div>
                 )}
               </Card>
+              <CameraScanner open={scanning} onClose={() => setScanning(false)} onDetect={onScan} formats={["qr_code"]} title="Scan attendance QR" />
               <Card title="Last 30 days" pad={false}>
                 <DataTable
                   dense rows={d.history} rowKey={(r: any) => r.id} empty={<Empty title="No attendance recorded yet" />}
@@ -669,6 +700,45 @@ export function VerifyScreen() {
           </Card>
         )}
       </div>
+    </>
+  );
+}
+
+/**
+ * Attendance QR station: keep this open on a tablet or phone at the entrance.
+ * The QR and its 6-digit code change every 30 seconds.
+ */
+export function AttendanceStationScreen() {
+  const p = useProduct();
+  const st = useApi<{ branch: string | null; code: string; url: string; qr: string; refreshInMs: number }>(`${p.base}/staff/attendance/station`);
+  const box = useRef<HTMLDivElement>(null);
+  const [left, setLeft] = useState(30);
+  const reload = st.reload;
+  useEffect(() => {
+    if (!st.data) return;
+    const due = Date.now() + st.data.refreshInMs;
+    const tick = setInterval(() => setLeft(Math.max(0, Math.ceil((due - Date.now()) / 1000))), 500);
+    const t = setTimeout(() => void reload(), st.data.refreshInMs + 300);
+    return () => { clearInterval(tick); clearTimeout(t); };
+  }, [st.data, reload]);
+  const fullscreen = () => { void box.current?.requestFullscreen?.().catch(() => undefined); };
+  return (
+    <>
+      <PageHeader title="Attendance QR" description="Staff scan this at work to check in and out. It changes every 30 seconds, so a photo of it cannot be used later."
+        actions={<Button onClick={fullscreen}><Maximize2 className="h-4 w-4" /> Full screen</Button>} />
+      <Loadable state={st}>
+        {(d) => (
+          <div ref={box} className="flex flex-col items-center justify-center rounded-2xl border border-slate-200 bg-white p-6 text-center [&:fullscreen]:h-screen">
+            <p className="text-sm font-semibold uppercase tracking-wider text-slate-500">{p.tenant.name}{d.branch ? ` · ${d.branch}` : ""}</p>
+            <h2 className="mt-1 flex items-center gap-2 text-xl font-semibold text-slate-900"><QrCode className="h-5 w-5" aria-hidden /> Scan to check in / out</h2>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={d.qr} alt="Attendance QR code" className="mt-4 h-72 w-72 max-w-full sm:h-96 sm:w-96" />
+            <p className="mt-3 text-sm text-slate-600">or type this code in My attendance</p>
+            <p className="font-mono text-5xl font-bold tracking-[0.3em] text-slate-900" aria-live="polite">{d.code}</p>
+            <p className="mt-3 text-sm text-slate-500">New code in {left}s</p>
+          </div>
+        )}
+      </Loadable>
     </>
   );
 }

@@ -100,6 +100,21 @@ describe("request hygiene", () => {
     expect((await rateLimit("unit:a", 3, 60_000)).ok).toBe(false);
   });
 
+  it("attendance codes: 6 digits, per branch, valid ~1 minute only", async () => {
+    const { attendanceCode, attendanceWindow, verifyAttendanceCode } = await import("@/server/core/keys");
+    const t = "11111111-1111-4111-8111-111111111111", b = "22222222-2222-4222-8222-222222222222", b2 = "33333333-3333-4333-8333-333333333333";
+    const now = Date.now();
+    const code = attendanceCode(t, b, "bill", attendanceWindow(now));
+    expect(code).toMatch(/^\d{6}$/);
+    expect(verifyAttendanceCode(t, b, "bill", code, now)).toBe(true);
+    expect(verifyAttendanceCode(t, b, "bill", code, now + 30_000)).toBe(true); // previous window still accepted
+    expect(verifyAttendanceCode(t, b, "bill", code, now + 61_000)).toBe(false); // a forwarded photo expires
+    expect(verifyAttendanceCode(t, b2, "bill", code, now)).toBe(attendanceCode(t, b2, "bill", attendanceWindow(now)) === code);
+    expect(verifyAttendanceCode(t, b, "dine", code, now)).toBe(attendanceCode(t, b, "dine", attendanceWindow(now)) === code);
+    expect(verifyAttendanceCode(t, b, "bill", "12345", now)).toBe(false);
+    expect(verifyAttendanceCode(t, b, "bill", "abcdef", now)).toBe(false);
+  });
+
   it("audit metadata never stores credentials, OTP or recovery codes", async () => {
     const { writeAudit } = await import("@/server/core/audit");
     let stored: any = null;

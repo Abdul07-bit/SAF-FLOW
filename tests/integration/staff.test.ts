@@ -16,8 +16,16 @@ describe("Growth staff management", () => {
     const cashier = await createStaff(biz.manager, "bill", "anu", [{ product: "bill", roleCode: "cashier" }]);
     const today = todayIST();
 
+    // The manager's attendance screen shows a QR + 6-digit code that changes every 30 s.
+    const station = async () => (await api("GET", "/bill/staff/attendance/station", { cookie: biz.manager })).body;
+    const st = await station();
+    expect(st.code).toMatch(/^\d{6}$/);
+    expect(st.url).toMatch(new RegExp(`/attend/bill/[0-9a-f-]{36}/${st.code}$`));
+    expect(st.qr).toMatch(/^data:image\/png;base64,/);
+    expectError(await api("GET", "/bill/staff/attendance/station", { cookie: cashier.cookie }), 403); // staff cannot see it
+
     // Not linked to an employee record yet
-    expectError(await api("POST", "/bill/staff/attendance/check-in", { cookie: cashier.cookie }), 400);
+    expectError(await api("POST", "/bill/staff/attendance/check-in", { cookie: cashier.cookie, body: { code: st.code } }), 400);
 
     const emp = await api("POST", "/bill/staff/employees", { cookie: biz.manager, body: { fullName: "Anu Thomas", designation: "Cashier", phone: "9800000001", bloodGroup: "O+", userId: cashier.id, dateOfJoining: today } });
     expect(emp.status, JSON.stringify(emp.body)).toBe(201);
@@ -27,14 +35,28 @@ describe("Growth staff management", () => {
     // A login can be linked to one employee only
     expectError(await api("PATCH", `/bill/staff/employees/${other.body.id}`, { cookie: biz.manager, body: { userId: cashier.id } }), 409);
 
-    // Self check-in / check-out
-    const cin = await api("POST", "/bill/staff/attendance/check-in", { cookie: cashier.cookie });
+    // Check-in only with the code on the attendance screen: no code, a wrong code,
+    // or another business's code is refused.
+    expectError(await api("POST", "/bill/staff/attendance/check-in", { cookie: cashier.cookie }), 400);
+    const wrong = String((Number(st.code) + 1) % 1_000_000).padStart(6, "0");
+    expectError(await api("POST", "/bill/staff/attendance/scan", { cookie: cashier.cookie, body: { code: wrong } }), 400);
+    const otherBiz = await createBusiness([{ productCode: "bill", tier: "GROWTH" }]);
+    const foreign = (await api("GET", "/bill/staff/attendance/station", { cookie: otherBiz.manager })).body;
+    expectError(await api("POST", "/bill/staff/attendance/scan", { cookie: cashier.cookie, body: { code: foreign.code } }), 400);
+    expectError(await api("POST", "/bill/staff/attendance/scan", { cookie: cashier.cookie, body: { code: (await station()).code, branchId: foreign.url.split("/").at(-2) } }), 403);
+
+    // Scanning (the QR link carries the branch) checks in, then out.
+    const fresh = await station();
+    const cin = await api("POST", "/bill/staff/attendance/scan", { cookie: cashier.cookie, body: { code: fresh.code, branchId: fresh.url.split("/").at(-2) } });
     expect(cin.status, JSON.stringify(cin.body)).toBe(200);
+    expect(cin.body.action).toBe("in");
     expect(cin.body.record.status).toBe("PRESENT");
-    expectError(await api("POST", "/bill/staff/attendance/check-in", { cookie: cashier.cookie }), 409);
-    const cout = await api("POST", "/bill/staff/attendance/check-out", { cookie: cashier.cookie });
+    expect(cin.body.record.source).toBe("SCAN");
+    expectError(await api("POST", "/bill/staff/attendance/check-in", { cookie: cashier.cookie, body: { code: (await station()).code } }), 409);
+    const cout = await api("POST", "/bill/staff/attendance/scan", { cookie: cashier.cookie, body: { code: (await station()).code } });
+    expect(cout.body.action).toBe("out");
     expect(cout.body.record.checkOutAt).toBeTruthy();
-    expectError(await api("POST", "/bill/staff/attendance/check-out", { cookie: cashier.cookie }), 409);
+    expectError(await api("POST", "/bill/staff/attendance/check-out", { cookie: cashier.cookie, body: { code: (await station()).code } }), 409);
     const mine = await api("GET", "/bill/staff/attendance/me", { cookie: cashier.cookie });
     expect(mine.body.today.checkInAt).toBeTruthy();
 
