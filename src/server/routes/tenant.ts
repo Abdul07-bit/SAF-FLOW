@@ -432,6 +432,7 @@ route({
       }),
       events,
       upiPayments: !!settings.upiId,
+      trial: { freeDays: { BASIC: settings.setupFreeDaysBasic, GROWTH: settings.setupFreeDaysGrowth } },
       gstRateBp: settings.gstRateBp,
       support: { phone: settings.supportPhone, email: settings.supportEmail, whatsapp: settings.supportWhatsApp },
     };

@@ -1041,5 +1041,11 @@ route({
 // Utility for the Add Business form: default dates
 route({
   method: "GET", path: "/admin/defaults", tag: "admin", summary: "Defaults for onboarding forms (today, plan prices)", auth: { platform: "platform.dashboard.read" },
-  handler: async ({ db }) => ({ today: todayIST(), tomorrow: addDays(todayIST(), 1), plans: await db.plan.findMany({ orderBy: [{ productCode: "asc" }, { tier: "asc" }] }) }),
+  handler: async ({ db }) => {
+    const s = await getPlatformSettings(db);
+    return {
+      today: todayIST(), tomorrow: addDays(todayIST(), 1), plans: await db.plan.findMany({ orderBy: [{ productCode: "asc" }, { tier: "asc" }] }),
+      trial: { days: s.trialDays, freeDays: { BASIC: s.setupFreeDaysBasic, GROWTH: s.setupFreeDaysGrowth } },
+    };
+  },
 });

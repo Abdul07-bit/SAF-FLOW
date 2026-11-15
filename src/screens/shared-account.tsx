@@ -176,6 +176,7 @@ interface SubData {
   invoices: any[];
   events: any[];
   upiPayments: boolean;
+  trial: { freeDays: { BASIC: number; GROWTH: number } };
   gstRateBp: number;
   support: { phone: string; email: string; whatsapp: string };
 }
@@ -271,13 +272,21 @@ export function SubscriptionScreen() {
           const due = d.invoices.filter((i) => i.status === "ISSUED");
           return (
             <div className="space-y-4">
-              {s && s.state !== "ACTIVE" && (
+              {s?.onTrial && (
+                <Notice tone={s.state === "ACTIVE" ? "info" : "bad"} title={s.state === "ACTIVE" ? `Free trial - ${Math.max(0, s.daysLeft)} day${s.daysLeft === 1 ? "" : "s"} left` : "Your free trial has ended"}>
+                  {s.state === "ACTIVE"
+                    ? `You are trying ${p.product.name} with all Growth features until ${fmtDate(s.trialEndsAt)}. `
+                    : `${p.product.name} is paused. `}
+                  Pay the setup fee below to continue: you then get {s.pendingTier === "GROWTH" || (!s.pendingTier && s.tier === "GROWTH") ? `${d.trial.freeDays.GROWTH} days of Growth` : `${d.trial.freeDays.BASIC} days of Basic`} free{s.state === "ACTIVE" ? " after the trial" : ""}, then {s.billingCycle === "MONTHLY" ? "monthly" : "annual"} maintenance.
+                </Notice>
+              )}
+              {s && !s.onTrial && s.state !== "ACTIVE" && (
                 <Notice tone={s.state === "GRACE" ? "warn" : "bad"} title={s.state === "GRACE" ? "Subscription expired - grace period" : `Subscription ${s.state.toLowerCase()}`}>
                   {s.state === "GRACE" ? `Access continues until ${fmtDate(s.graceEndsAt)}. Pay the renewal invoice below to avoid interruption.` : "Pay the outstanding invoice or contact SmartAutoFlex support to restore access."}
                 </Notice>
               )}
               <div className="grid gap-4 lg:grid-cols-[1fr_20rem]">
-                <Card title="Current plan" actions={s && <StatusBadge value={s.state} label={s.state === "GRACE" ? "Grace period" : undefined} />}>
+                <Card title="Current plan" actions={s && <StatusBadge value={s.onTrial ? (s.state === "ACTIVE" ? "PENDING" : "EXPIRED") : s.state} label={s.onTrial ? (s.state === "ACTIVE" ? "Free trial" : "Paused") : s.state === "GRACE" ? "Grace period" : undefined} />}>
                   {s ? (
                     <>
                       <KeyValue items={[

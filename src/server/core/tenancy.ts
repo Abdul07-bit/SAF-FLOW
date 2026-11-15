@@ -22,6 +22,11 @@ export const productSelectionSchema = z.object({
   graceDays: z.number().int().min(0).max(90).nullable().optional(),
   markSetupPaid: z.boolean().optional(),
   markSubscriptionPaid: z.boolean().optional(),
+  /**
+   * Start with the free Growth trial: only the setup fee is invoiced; paying it
+   * gives the chosen plan's free days, then maintenance is billed normally.
+   */
+  trial: z.boolean().optional(),
 });
 
 export const paymentMethodSchema = z.enum(["CASH", "UPI", "CARD", "BANK_TRANSFER", "CHEQUE", "CASHFREE", "OTHER"]);
@@ -114,6 +119,7 @@ export async function addProductToTenant(
     expiryDate: sel.expiryDate,
     setupFee: sel.setupFee,
     graceDays: sel.graceDays ?? null,
+    trial: sel.trial,
     paid: { setup: sel.markSetupPaid, subscription: sel.markSubscriptionPaid, method: payment.method, reference: payment.reference },
   }, actor);
   await grantOwnerAccess(db, tenantId, sel.productCode);

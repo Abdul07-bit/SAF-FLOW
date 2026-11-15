@@ -229,7 +229,14 @@ export function SubscriptionActions({ sub, onChanged, size = "sm" }: { sub: Admi
   );
 }
 
-export function SubscriptionState({ sub }: { sub: { state: string; currentPeriodEnd: string; graceEndsAt: string; daysLeft: number } }): ReactNode {
+export function SubscriptionState({ sub }: { sub: { state: string; currentPeriodEnd: string; graceEndsAt: string; daysLeft: number; onTrial?: boolean } }): ReactNode {
+  if (sub.onTrial)
+    return (
+      <span className="flex flex-col gap-0.5">
+        <StatusBadge value={sub.state === "ACTIVE" ? "PENDING" : "EXPIRED"} label={sub.state === "ACTIVE" ? "Free trial" : "Trial ended - paused"} />
+        <span className="text-xs text-slate-500">{sub.state === "ACTIVE" ? `${Math.max(0, sub.daysLeft)} day${sub.daysLeft === 1 ? "" : "s"} left` : "Setup fee unpaid"}</span>
+      </span>
+    );
   return (
     <span className="flex flex-col gap-0.5">
       <StatusBadge value={sub.state} label={sub.state === "GRACE" ? "Grace period" : undefined} />

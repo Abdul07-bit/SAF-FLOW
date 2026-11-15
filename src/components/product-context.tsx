@@ -4,6 +4,8 @@ import { createContext, useContext } from "react";
 import type { ProductCode } from "@/config/catalog";
 
 export interface SubscriptionInfo {
+  onTrial?: boolean;
+  trialEndsAt?: string | null;
   id: string;
   tier: "BASIC" | "GROWTH";
   planName: string;

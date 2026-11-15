@@ -24,6 +24,11 @@ export const platformSettingsSchema = z.object({
   reminderDays: z.array(z.number().int().min(0).max(60)).max(6),
   /** Invoice payment terms in days. */
   invoiceDueDays: z.number().int().min(0).max(60),
+  /** Free trial (Growth features) for new subscriptions; 0 disables it. */
+  trialDays: z.number().int().min(0).max(60),
+  /** Free days after the setup fee is paid, per plan. */
+  setupFreeDaysBasic: z.number().int().min(0).max(365),
+  setupFreeDaysGrowth: z.number().int().min(0).max(365),
   /** SAF's UPI ID. Businesses pay invoices to it and upload the receipt. Empty hides UPI payment. */
   upiId: z.union([z.literal(""), z.string().regex(UPI_ID, "Enter a valid UPI ID, e.g. name@okicici")]),
   /** Name shown in the payer's UPI app; should match the bank account holder. */
@@ -43,6 +48,9 @@ export const PLATFORM_DEFAULTS: PlatformSettings = {
   gstRateBp: 1800,
   reminderDays: [15, 7, 3, 1],
   invoiceDueDays: 7,
+  trialDays: 7,
+  setupFreeDaysBasic: 15,
+  setupFreeDaysGrowth: 30,
   upiId: "7904113127abdul-2@okicici",
   upiPayeeName: "Abdul Gaffar",
 };

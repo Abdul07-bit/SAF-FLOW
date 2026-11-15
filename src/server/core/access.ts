@@ -20,6 +20,9 @@ export interface SubscriptionSummary {
   daysLeft: number;
   pendingTier: PlanTier | null;
   pendingBillingCycle: BillingCycle | null;
+  /** Free trial: paused at its end until the setup fee is paid. */
+  onTrial: boolean;
+  trialEndsAt: string | null;
 }
 
 interface SubLike {
@@ -55,6 +58,7 @@ type SubWithPlans = SubLike & {
   pendingBillingCycle: BillingCycle | null;
   plan: { tier: PlanTier; name: string; graceDays: number };
   pendingPlan: { tier: PlanTier } | null;
+  trialEndsAt?: Date | null;
 };
 
 export function summarize(sub: SubWithPlans, now = new Date()): SubscriptionSummary {
@@ -73,6 +77,8 @@ export function summarize(sub: SubWithPlans, now = new Date()): SubscriptionSumm
     daysLeft: s.daysLeft,
     pendingTier: sub.pendingPlan?.tier ?? null,
     pendingBillingCycle: sub.pendingBillingCycle,
+    onTrial: !!sub.trialEndsAt,
+    trialEndsAt: sub.trialEndsAt ? sub.trialEndsAt.toISOString() : null,
   };
 }
 
@@ -160,7 +166,9 @@ export function assertProductUsable(access: ProductAccess, opts: { allowInactive
   if (opts.allowInactive) return;
   const st = access.subscription.state;
   if (st === "EXPIRED")
-    throw new HttpError(402, "SUBSCRIPTION_EXPIRED", `Your ${name} subscription has expired. Please renew to continue.`);
+    throw new HttpError(402, "SUBSCRIPTION_EXPIRED", access.subscription.onTrial
+      ? `Your free trial of ${name} has ended. Pay the setup fee on the Subscription page to continue.`
+      : `Your ${name} subscription has expired. Please renew to continue.`);
   if (st === "SUSPENDED" || st === "CANCELLED")
     throw forbidden("SUBSCRIPTION_SUSPENDED", `Your ${name} subscription is ${st.toLowerCase()}.`);
   if (st === "PENDING") throw forbidden("SUBSCRIPTION_NOT_STARTED", `Your ${name} subscription has not started yet.`);

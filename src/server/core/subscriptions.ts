@@ -125,10 +125,44 @@ export async function recordPayment(
 
 export async function markInvoicePaid(db: Tx, invoice: Invoice, actor: Actor) {
   await db.invoice.update({ where: { id: invoice.id }, data: { status: "PAID", paidAt: new Date() } });
+  if (invoice.kind === "SETUP" && invoice.subscriptionId) await convertTrial(db, invoice.subscriptionId, actor);
   if (invoice.kind === "SUBSCRIPTION" && invoice.subscriptionId && invoice.periodEnd) {
     const sub = await db.productSubscription.findUnique({ where: { id: invoice.subscriptionId } });
     if (sub && sub.currentPeriodEnd < invoice.periodEnd) await extendTo(db, sub, invoice, actor);
   }
+}
+
+/**
+ * Setup fee paid on a trial: switch to the chosen plan with its free days
+ * (Basic 15 / Growth 30 by default). Days left in the trial are kept: the free
+ * days start after the trial ends. Maintenance is then billed by the renewal job.
+ */
+async function convertTrial(db: Tx, subId: string, actor: Actor) {
+  const sub = await db.productSubscription.findUnique({ where: { id: subId }, include: { plan: true, pendingPlan: true } });
+  if (!sub?.trialEndsAt) return;
+  const settings = await getPlatformSettings(db);
+  const target = sub.pendingPlan ?? sub.plan;
+  const freeDays = target.tier === "GROWTH" ? settings.setupFreeDaysGrowth : settings.setupFreeDaysBasic;
+  const today = todayIST();
+  const afterTrial = addDays(istDate(sub.trialEndsAt), 1);
+  const from = afterTrial > today ? afterTrial : today;
+  const end = freeDays > 0 ? addDays(from, freeDays - 1) : addDays(from, -1);
+  await db.productSubscription.update({
+    where: { id: sub.id },
+    data: {
+      planId: target.id, pendingPlanId: null, graceDays: null, trialEndsAt: null,
+      currentPeriodStart: startOfDayIST(today), currentPeriodEnd: endOfDayIST(end),
+      status: sub.status === "EXPIRED" ? "ACTIVE" : sub.status,
+    },
+  });
+  await event(db, sub, "TRIAL_CONVERTED", { tier: target.tier, freeDays, until: end }, actor);
+  const name = PRODUCTS[sub.productCode as ProductCode].name;
+  await notify(db, {
+    tenantId: sub.tenantId, productCode: sub.productCode, kind: "SUBSCRIPTION_ACTIVATED",
+    title: `${name} ${target.name} is active`,
+    body: `Setup fee received. Your ${target.name} plan is free until ${fmtDate(end)}; maintenance is billed after that.`,
+    link: `/${sub.productCode}/subscription`,
+  });
 }
 
 /** Moves the subscription onto the invoice's period, plan and cycle. */
@@ -163,6 +197,8 @@ export interface NewSubscriptionInput {
   expiryDate?: ISODate;
   setupFee?: number;
   graceDays?: number | null;
+  /** Start with the free Growth trial (see convertTrial). */
+  trial?: boolean;
   paid?: { setup?: boolean; subscription?: boolean; method?: PaymentMethod; reference?: string };
 }
 
@@ -182,6 +218,8 @@ export async function createSubscription(db: Tx, tenantId: string, input: NewSub
       throw conflict(`${PRODUCTS[input.productCode].name} is already subscribed (${st.toLowerCase()}).`);
   }
 
+  if (input.trial) return createTrial(db, tenantId, input, plan, existing?.id ?? null, actor);
+
   const data = {
     planId: plan.id,
     billingCycle: input.billingCycle,
@@ -196,6 +234,7 @@ export async function createSubscription(db: Tx, tenantId: string, input: NewSub
     suspendedAt: null,
     suspendedReason: null,
     cancelledAt: null,
+    trialEndsAt: null,
   };
   const sub = existing
     ? await db.productSubscription.update({ where: { id: existing.id }, data })
@@ -220,6 +259,51 @@ export async function createSubscription(db: Tx, tenantId: string, input: NewSub
 
   await event(db, sub, existing ? "REACTIVATED" : "CREATED", { tier: input.tier, cycle: input.billingCycle, expiry }, actor);
   return sub;
+}
+
+/**
+ * Free trial with Growth features. Only the setup fee is invoiced; at trial end
+ * the subscription pauses (no grace) until the setup fee is paid.
+ */
+async function createTrial(db: Tx, tenantId: string, input: NewSubscriptionInput, target: Plan, existingId: string | null, actor: Actor) {
+  const settings = await getPlatformSettings(db);
+  if (settings.trialDays < 1) throw badRequest("Free trials are switched off in Global settings.");
+  const growth = await planFor(db, input.productCode, "GROWTH");
+  const start = todayIST();
+  const trialEnd = addDays(start, settings.trialDays - 1);
+  const setupFee = input.setupFee ?? target.setupFee;
+  const data = {
+    planId: growth.id,
+    billingCycle: input.billingCycle,
+    status: "ACTIVE" as const,
+    startDate: startOfDayIST(start),
+    currentPeriodStart: startOfDayIST(start),
+    currentPeriodEnd: endOfDayIST(trialEnd),
+    graceDays: 0,
+    setupFee,
+    pendingPlanId: target.id === growth.id ? null : target.id,
+    pendingBillingCycle: null,
+    suspendedAt: null,
+    suspendedReason: null,
+    cancelledAt: null,
+    trialEndsAt: endOfDayIST(trialEnd),
+  };
+  const sub = existingId
+    ? await db.productSubscription.update({ where: { id: existingId }, data })
+    : await db.productSubscription.create({ data: { tenantId, productCode: input.productCode, ...data } });
+  await event(db, sub, "TRIAL_STARTED", { days: settings.trialDays, until: trialEnd, plan: target.tier, cycle: input.billingCycle }, actor);
+
+  const freeDays = target.tier === "GROWTH" ? settings.setupFreeDaysGrowth : settings.setupFreeDaysBasic;
+  if (setupFee > 0) {
+    const inv = await issueInvoice(db, {
+      tenantId, subscriptionId: sub.id, kind: "SETUP", productCode: input.productCode, planId: target.id,
+      description: `${PRODUCTS[input.productCode].name} - one-time setup (${target.name})${freeDays ? `, includes ${freeDays} days free` : ""}`,
+      subtotal: setupFee,
+    });
+    if (input.paid?.setup)
+      await recordPayment(db, { invoiceId: inv.id, method: input.paid.method ?? "CASH", reference: input.paid.reference, recordedById: actor?.id }, actor);
+  }
+  return db.productSubscription.findUniqueOrThrow({ where: { id: sub.id } });
 }
 
 /** Renews for one more cycle. Early renewals start the day after the current expiry (no days lost). */
@@ -386,8 +470,10 @@ export async function runRenewalJob(db: Tx, now = new Date()) {
       await event(db, sub, "EXPIRED", { graceEndedAt: summary.graceEndsAt }, null);
       await notify(db, {
         tenantId: sub.tenantId, productCode: sub.productCode, kind: "SUBSCRIPTION_EXPIRED",
-        title: `${name} subscription expired`,
-        body: `Your ${name} subscription expired and the grace period has ended. Renew to restore access.`,
+        title: sub.trialEndsAt ? `${name} free trial ended` : `${name} subscription expired`,
+        body: sub.trialEndsAt
+          ? `Your free trial has ended and ${name} is paused. Pay the setup fee to continue.`
+          : `Your ${name} subscription expired and the grace period has ended. Renew to restore access.`,
         link: `/${sub.productCode}/subscription`,
       });
       result.expired++;
@@ -399,8 +485,10 @@ export async function runRenewalJob(db: Tx, now = new Date()) {
     const daysLeft = daysBetween(today, expiryDay);
     if (daysLeft > maxLead) continue;
 
+    // Trial: the setup invoice is what unlocks it; no maintenance invoice yet.
+    const trialAwaitingSetup = !!sub.trialEndsAt && sub.setupFee > 0;
     // Make sure a renewal invoice exists for the next period.
-    if (!(await openRenewalInvoice(db, sub))) {
+    if (!trialAwaitingSetup && !(await openRenewalInvoice(db, sub))) {
       const plan = sub.pendingPlan ?? sub.plan;
       const cycle = sub.pendingBillingCycle ?? sub.billingCycle;
       const start = nextPeriodStart(sub);
@@ -417,8 +505,11 @@ export async function runRenewalJob(db: Tx, now = new Date()) {
     if ((settings.reminderDays.includes(daysLeft) || daysLeft < 0) && !remindedToday) {
       await notify(db, {
         tenantId: sub.tenantId, productCode: sub.productCode, kind: "RENEWAL_REMINDER",
-        title: daysLeft >= 0 ? `${name} renews in ${daysLeft} day${daysLeft === 1 ? "" : "s"}` : `${name} is in its grace period`,
-        body: daysLeft >= 0
+        title: trialAwaitingSetup ? `${name} free trial ends in ${Math.max(0, daysLeft)} day${daysLeft === 1 ? "" : "s"}`
+          : daysLeft >= 0 ? `${name} renews in ${daysLeft} day${daysLeft === 1 ? "" : "s"}` : `${name} is in its grace period`,
+        body: trialAwaitingSetup
+          ? `Pay the setup fee before ${fmtDate(expiryDay)} to keep using ${name}; your plan's free days start after the trial.`
+          : daysLeft >= 0
           ? `Your ${sub.plan.name} subscription expires on ${fmtDate(expiryDay)}. Pay the renewal invoice to avoid interruption.`
           : `Your subscription expired on ${fmtDate(expiryDay)}. Access continues until ${fmtDate(summary.graceEndsAt)}.`,
         link: `/${sub.productCode}/subscription`,

@@ -4553,6 +4553,9 @@
                         },
                         "markSubscriptionPaid": {
                           "type": "boolean"
+                        },
+                        "trial": {
+                          "type": "boolean"
                         }
                       },
                       "required": [
@@ -5119,6 +5122,9 @@
                     "type": "boolean"
                   },
                   "markSubscriptionPaid": {
+                    "type": "boolean"
+                  },
+                  "trial": {
                     "type": "boolean"
                   },
                   "paymentMethod": {
@@ -7188,6 +7194,21 @@
                     "type": "integer",
                     "minimum": 0,
                     "maximum": 60
+                  },
+                  "trialDays": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 60
+                  },
+                  "setupFreeDaysBasic": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 365
+                  },
+                  "setupFreeDaysGrowth": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 365
                   },
                   "upiId": {
                     "anyOf": [

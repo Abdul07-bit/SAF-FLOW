@@ -233,6 +233,7 @@ export function AdminAudit() {
 interface Settings {
   platformName: string; supportPhone: string; supportEmail: string; supportWhatsApp: string; companyAddress: string; companyGstin: string;
   invoicePrefix: string; gstRateBp: number; reminderDays: number[]; invoiceDueDays: number; upiId: string; upiPayeeName: string;
+  trialDays: number; setupFreeDaysBasic: number; setupFreeDaysGrowth: number;
 }
 
 function Flag({ ok, children }: { ok: boolean; children: React.ReactNode }) {
@@ -247,8 +248,11 @@ export function AdminSettings() {
 
   useEffect(() => {
     if (data.data && !form) {
-      const { gstRateBp, reminderDays, invoiceDueDays, ...rest } = data.data.settings;
-      setForm({ ...rest, gstRatePct: String(gstRateBp / 100), reminderDays: reminderDays.join(", "), invoiceDueDays: String(invoiceDueDays) });
+      const { gstRateBp, reminderDays, invoiceDueDays, trialDays, setupFreeDaysBasic, setupFreeDaysGrowth, ...rest } = data.data.settings;
+      setForm({
+        ...rest, gstRatePct: String(gstRateBp / 100), reminderDays: reminderDays.join(", "), invoiceDueDays: String(invoiceDueDays),
+        trialDays: String(trialDays), setupFreeDaysBasic: String(setupFreeDaysBasic), setupFreeDaysGrowth: String(setupFreeDaysGrowth),
+      });
     }
   }, [data.data, form]);
 
@@ -264,6 +268,7 @@ export function AdminSettings() {
           companyAddress: form.companyAddress, companyGstin: form.companyGstin, invoicePrefix: form.invoicePrefix,
           gstRateBp: Math.round(Number(form.gstRatePct) * 100), reminderDays: [...new Set(reminderDays)].sort((a, b) => b - a),
           invoiceDueDays: Number(form.invoiceDueDays), upiId: String(form.upiId).trim(), upiPayeeName: String(form.upiPayeeName).trim(),
+          trialDays: Number(form.trialDays), setupFreeDaysBasic: Number(form.setupFreeDaysBasic), setupFreeDaysGrowth: Number(form.setupFreeDaysGrowth),
         },
       });
       await data.reload();
@@ -299,6 +304,13 @@ export function AdminSettings() {
               <Card title="Renewals" subtitle="Grace periods are set per plan under Plans and pricing.">
                 <div className="grid gap-x-4 gap-y-3 sm:grid-cols-2">
                   <Field label="Renewal reminders (days before expiry)" help="Comma-separated, up to 6. The renewal invoice is raised at the earliest reminder.">{text("reminderDays", { placeholder: "15, 7, 3, 1" })}</Field>
+                </div>
+              </Card>
+              <Card title="Free trial and setup offer" subtitle="New businesses try Growth free; the app pauses after the trial until the setup fee is paid.">
+                <div className="grid gap-x-4 gap-y-3 sm:grid-cols-3">
+                  <Field label="Free trial (days)" required help="Growth features. 0 = no trial.">{text("trialDays", { type: "number", required: true, min: 0, max: 60, step: 1 })}</Field>
+                  <Field label="Free days after setup: Basic" required>{text("setupFreeDaysBasic", { type: "number", required: true, min: 0, max: 365, step: 1 })}</Field>
+                  <Field label="Free days after setup: Growth" required>{text("setupFreeDaysGrowth", { type: "number", required: true, min: 0, max: 365, step: 1 })}</Field>
                 </div>
               </Card>
               <Card title="UPI payments" subtitle="Businesses scan a QR for this UPI ID, pay, and upload the receipt. You approve it under Payments.">

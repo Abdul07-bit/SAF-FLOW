@@ -164,7 +164,7 @@ export function AdminBusinesses() {
 // ---------------------------------------------------------------------------
 
 interface Plan { id: string; productCode: ProductCode; tier: "BASIC" | "GROWTH"; name: string; monthlyPrice: number; annualPrice: number; setupFee: number; graceDays: number; isActive: boolean }
-interface Selection { on: boolean; tier: "BASIC" | "GROWTH"; billingCycle: "MONTHLY" | "ANNUAL"; setupFee: string; startDate: string; expiryDate: string; markSetupPaid: boolean; markSubscriptionPaid: boolean }
+interface Selection { on: boolean; tier: "BASIC" | "GROWTH"; billingCycle: "MONTHLY" | "ANNUAL"; setupFee: string; startDate: string; expiryDate: string; markSetupPaid: boolean; markSubscriptionPaid: boolean; trial: boolean }
 
 const EMPTY_PROFILE = { name: "", category: "RESTAURANT", ownerName: "", phone: "", email: "", address: "", city: "", state: "", pincode: "", gstin: "", upiId: "", upiPayeeName: "" };
 const defaultExpiry = (start: string, cycle: string) => (start ? addDays(addMonths(start, cycle === "ANNUAL" ? 12 : 1), -1) : "");
@@ -191,7 +191,7 @@ function ImagePick({ file, onChange, label }: { file: File | null; onChange: (f:
 }
 
 export function AdminNewBusiness() {
-  const defaults = useApi<{ today: string; plans: Plan[] }>("/admin/defaults");
+  const defaults = useApi<{ today: string; plans: Plan[]; trial: { days: number; freeDays: { BASIC: number; GROWTH: number } } }>("/admin/defaults");
   const [profile, setProfile] = useState(EMPTY_PROFILE);
   const [code, setCode] = useState("");
   const [sel, setSel] = useState<Record<ProductCode, Selection> | null>(null);
@@ -215,7 +215,7 @@ export function AdminNewBusiness() {
   const planOf = (c: ProductCode, tier: string) => defaults.data?.plans.find((p) => p.productCode === c && p.tier === tier);
   const blank = (c: ProductCode, today: string, plans: Plan[]): Selection => {
     const p = plans.find((x) => x.productCode === c && x.tier === "BASIC");
-    return { on: false, tier: "BASIC", billingCycle: "MONTHLY", setupFee: p ? String(p.setupFee / 100) : "0", startDate: today, expiryDate: "", markSetupPaid: false, markSubscriptionPaid: false };
+    return { on: false, tier: "BASIC", billingCycle: "MONTHLY", setupFee: p ? String(p.setupFee / 100) : "0", startDate: today, expiryDate: "", markSetupPaid: false, markSubscriptionPaid: false, trial: (defaults.data?.trial.days ?? 0) > 0 };
   };
   // Recommended products follow the business type until the admin picks products by hand.
   const productsTouched = useRef(false);
@@ -248,9 +248,10 @@ export function AdminNewBusiness() {
       const plan = planOf(c, s.tier);
       const fee = Math.round(Number(s.setupFee || 0) * 100);
       const price = plan ? (s.billingCycle === "MONTHLY" ? plan.monthlyPrice : plan.annualPrice) : 0;
-      setup += fee; subscription += price;
+      setup += fee;
+      if (!s.trial) subscription += price;
       if (s.markSetupPaid) paidNow += fee;
-      if (s.markSubscriptionPaid) paidNow += price;
+      if (s.markSubscriptionPaid && !s.trial) paidNow += price;
     }
     return { setup, subscription, paidNow };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -273,7 +274,9 @@ export function AdminNewBusiness() {
             const s = sel[c];
             return clean({
               productCode: c, tier: s.tier, billingCycle: s.billingCycle, setupFee: Math.round(Number(s.setupFee || 0) * 100),
-              startDate: s.startDate, expiryDate: s.expiryDate, markSetupPaid: s.markSetupPaid, markSubscriptionPaid: s.markSubscriptionPaid,
+              ...(s.trial
+                ? { trial: true, markSetupPaid: s.markSetupPaid }
+                : { startDate: s.startDate, expiryDate: s.expiryDate, markSetupPaid: s.markSetupPaid, markSubscriptionPaid: s.markSubscriptionPaid }),
             });
           }),
           ...(anyPaid ? clean({ paymentMethod: payment.method, paymentReference: payment.reference }) : {}),
@@ -416,13 +419,28 @@ export function AdminNewBusiness() {
                             <Field label="Setup fee (Rs)" help={plan ? `Plan default ${formatINR(plan.setupFee, { whole: true })}` : undefined}>
                               <Input type="number" min={0} step="1" inputMode="decimal" value={s.setupFee} onChange={(e) => patch(c, { setupFee: e.target.value })} />
                             </Field>
-                            <Field label="Activation date"><Input type="date" required value={s.startDate} onChange={(e) => patch(c, { startDate: e.target.value })} /></Field>
-                            <Field label="Subscription expiry" help={`Empty = ${fmtDate(defaultExpiry(s.startDate, s.billingCycle))} (one ${s.billingCycle === "MONTHLY" ? "month" : "year"})`}>
-                              <Input type="date" min={s.startDate} value={s.expiryDate} onChange={(e) => patch(c, { expiryDate: e.target.value })} />
-                            </Field>
+                            {d.trial.days > 0 && (
+                              <label className="flex items-start gap-2 rounded-lg bg-white/70 p-2 text-sm text-slate-800 sm:col-span-2 lg:col-span-3">
+                                <input type="checkbox" className="mt-0.5 h-4 w-4 accent-[var(--brand)]" checked={s.trial} onChange={(e) => patch(c, { trial: e.target.checked })} />
+                                <span>
+                                  <span className="font-medium">Start with a {d.trial.days}-day free trial (Growth features)</span>
+                                  <span className="block text-xs text-slate-600">
+                                    Only the setup fee is invoiced. After the trial the app pauses until it is paid; then {s.tier === "GROWTH" ? d.trial.freeDays.GROWTH : d.trial.freeDays.BASIC} days free on {s.tier === "GROWTH" ? "Growth" : "Basic"}, then {s.billingCycle === "MONTHLY" ? "monthly" : "annual"} maintenance.
+                                  </span>
+                                </span>
+                              </label>
+                            )}
+                            {!s.trial && (
+                              <>
+                                <Field label="Activation date"><Input type="date" required value={s.startDate} onChange={(e) => patch(c, { startDate: e.target.value })} /></Field>
+                                <Field label="Subscription expiry" help={`Empty = ${fmtDate(defaultExpiry(s.startDate, s.billingCycle))} (one ${s.billingCycle === "MONTHLY" ? "month" : "year"})`}>
+                                  <Input type="date" min={s.startDate} value={s.expiryDate} onChange={(e) => patch(c, { expiryDate: e.target.value })} />
+                                </Field>
+                              </>
+                            )}
                             <div className="space-y-1 self-end text-sm text-slate-800">
                               <label className="flex items-center gap-2"><input type="checkbox" className="h-4 w-4 accent-[var(--brand)]" checked={s.markSetupPaid} onChange={(e) => patch(c, { markSetupPaid: e.target.checked })} /> Setup fee received</label>
-                              <label className="flex items-center gap-2"><input type="checkbox" className="h-4 w-4 accent-[var(--brand)]" checked={s.markSubscriptionPaid} onChange={(e) => patch(c, { markSubscriptionPaid: e.target.checked })} /> First {s.billingCycle === "MONTHLY" ? "month" : "year"} received</label>
+                              {!s.trial && <label className="flex items-center gap-2"><input type="checkbox" className="h-4 w-4 accent-[var(--brand)]" checked={s.markSubscriptionPaid} onChange={(e) => patch(c, { markSubscriptionPaid: e.target.checked })} /> First {s.billingCycle === "MONTHLY" ? "month" : "year"} received</label>}
                             </div>
                           </div>
                         )}
