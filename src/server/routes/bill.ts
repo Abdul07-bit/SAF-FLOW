@@ -12,10 +12,11 @@ import { nextSeq, withPlatform, withTenant, type Tx } from "../db";
 import { token } from "../core/ids";
 import { getProductSettings } from "../core/settings";
 import { fileUrl } from "../core/storage";
+import { addTenders, assertSplitMatches, cashPart, describePayment, splitPartsSchema } from "@/shared/tender";
 import { rangeQuery } from "./dine";
 
 const round3 = (n: number) => Math.round(n * 1000) / 1000;
-const TENDER = z.enum(["CASH", "UPI", "CARD", "WALLET", "CREDIT", "OTHER"]);
+const TENDER = z.enum(["CASH", "UPI", "CARD", "WALLET", "CREDIT", "OTHER", "SPLIT"]);
 
 // ---------------------------------------------------------------------------
 // Stock primitive
@@ -121,7 +122,7 @@ route({
     const hourly = Array.from({ length: 24 }, (_, h) => ({ hour: h, sales: 0 }));
     let margin = 0;
     for (const s of todaySales) {
-      methods[s.paymentMethod] = (methods[s.paymentMethod] ?? 0) + s.total;
+      addTenders(methods, s);
       hourly[Math.floor(istMinutes(s.createdAt) / 60)].sales += s.total;
       for (const i of s.items) {
         top[i.productId] ??= { name: i.name, qty: 0, revenue: 0 };
@@ -160,8 +161,8 @@ route({
     ]);
     const done = mine.filter((s) => s.status === "COMPLETED");
     const byMethod: Record<string, number> = {};
-    for (const s of done) byMethod[s.paymentMethod] = (byMethod[s.paymentMethod] ?? 0) + s.total;
-    const cash = done.filter((s) => s.paymentMethod === "CASH").reduce((a, s) => a + s.total, 0);
+    for (const s of done) addTenders(byMethod, s);
+    const cash = done.reduce((a, s) => a + cashPart(s), 0);
     return { totals: { count: done.length, amount: done.reduce((a, s) => a + s.total, 0), cashInDrawer: cash, voided: mine.length - done.length, byMethod }, recent: mine.slice(0, 25), counters };
   },
 });
@@ -184,6 +185,8 @@ route({
     items: z.array(z.object({ productId: z.uuid(), qty: z.number().positive().max(100000), discount: z.number().int().min(0).default(0) })).min(1).max(300),
     discount: z.number().int().min(0).default(0),
     paymentMethod: TENDER,
+    /** Required when paymentMethod = SPLIT; the parts must add up to the bill total. */
+    split: splitPartsSchema.optional(),
     amountPaid: z.number().int().min(0).optional(),
     customerId: z.uuid().optional(),
     customer: z.object({ name: z.string().trim().min(1).max(100), phone: z.string().trim().regex(/^[+\d][\d\s-]{6,18}$/) }).optional(),
@@ -222,7 +225,14 @@ route({
       return { p, qty: round3(i.qty), discount: i.discount };
     });
     const totals = computeTotals(lines.map((l) => ({ unitPrice: l.p.price, qty: l.qty, taxRate: l.p.taxRate, discount: l.discount })), b.discount);
-    const amountPaid = b.amountPaid ?? totals.total;
+    let split: { method: string; amount: number }[] | null = null;
+    if (b.paymentMethod === "SPLIT") {
+      if (!b.split) throw badRequest("Enter the amount paid by each method for a split payment.");
+      try { split = assertSplitMatches(b.split, totals.total); } catch (e) { throw badRequest((e as Error).message); }
+    }
+    // Change is only possible on the cash portion (all of a cash bill, or the cash part of a split).
+    const cashDue = b.paymentMethod === "CASH" ? totals.total : split ? cashPart({ paymentMethod: "SPLIT", paymentSplit: split, total: totals.total }) : 0;
+    const amountPaid = cashDue > 0 ? (b.amountPaid ?? totals.total) : totals.total;
     if (b.paymentMethod !== "CREDIT" && amountPaid < totals.total) throw badRequest("Amount received is less than the bill total.");
     if (b.paymentMethod === "CREDIT" && !customerId) throw badRequest("Select a customer for credit sales.");
 
@@ -234,8 +244,8 @@ route({
         tenantId: ctx.tenantId, branchId: ctx.branchId, counterId, saleNo,
         invoiceNo: `${settings.invoicePrefix}/${fy}/${String(invSeq).padStart(5, "0")}`,
         customerId, cashierId: ctx.user.id, subtotal: totals.subtotal, discount: totals.discount, taxTotal: totals.taxTotal,
-        total: totals.total, paymentMethod: b.paymentMethod, amountPaid,
-        changeDue: b.paymentMethod === "CASH" ? Math.max(0, amountPaid - totals.total) : 0, publicToken: token(18),
+        total: totals.total, paymentMethod: b.paymentMethod, ...(split ? { paymentSplit: split } : {}), amountPaid,
+        changeDue: cashDue > 0 ? Math.max(0, amountPaid - totals.total) : 0, publicToken: token(18),
         items: {
           create: lines.map((l, idx) => ({
             tenantId: ctx.tenantId, productId: l.p.id, name: l.p.name, barcode: l.p.barcode, qty: l.qty, unitPrice: l.p.price,
@@ -246,7 +256,7 @@ route({
     });
     for (const l of lines)
       await moveBillStock(ctx.db, ctx.tenantId, l.p.id, ctx.branchId, -l.qty, "SALE", { reference: sale.invoiceNo, userId: ctx.user.id, allowNegative: settings.allowNegativeStock });
-    await ctx.audit("bill.sale.create", { type: "bill_sale", id: sale.id }, { invoiceNo: sale.invoiceNo, total: sale.total });
+    await ctx.audit("bill.sale.create", { type: "bill_sale", id: sale.id }, { invoiceNo: sale.invoiceNo, total: sale.total, method: sale.paymentMethod, ...(split ? { split } : {}) });
     ctx.status = 201;
     const full = await ctx.db.billSale.findUniqueOrThrow({ where: { id: sale.id }, include: saleInclude });
     return { ...full, invoiceUrl: `/invoice/bill/${sale.publicToken}` };
@@ -548,7 +558,7 @@ route({
     for (const s of sales) {
       const d = istDate(s.createdAt);
       if (days[d]) { days[d].sales += s.total; days[d].bills++; }
-      methods[s.paymentMethod] = (methods[s.paymentMethod] ?? 0) + s.total;
+      addTenders(methods, s);
       for (const i of s.items) {
         top[i.productId] ??= { name: i.name, qty: 0, revenue: 0 };
         top[i.productId].qty = round3(top[i.productId].qty + i.qty);
@@ -652,7 +662,7 @@ route({
         pay: paid || s.status === "VOID" ? null : await shopUpi(business, s.total, s.invoiceNo ?? "Bill", sellerName),
         seller: { name: settings.storeName || business.name, address: [business.address, business.city, business.state, business.pincode].filter(Boolean).join(", "), phone: business.phone, gstin: settings.gstin || business.gstin, logoUrl: fileUrl(business.logoKey) },
         invoiceNo: s.invoiceNo, date: s.createdAt, customer: { name: s.customer?.name ?? null, phone: s.customer?.phone ?? null },
-        meta: [s.counter?.name ?? "", `Cashier: ${s.cashier?.fullName ?? "-"}`, `Paid by ${s.paymentMethod}`].filter(Boolean),
+        meta: [s.counter?.name ?? "", `Cashier: ${s.cashier?.fullName ?? "-"}`, `Paid by ${describePayment(s)}`].filter(Boolean),
         lines: s.items.map((i) => ({ name: i.name, qty: i.qty, rate: i.unitPrice, taxRate: i.taxRate, amount: Math.round(i.unitPrice * i.qty), discount: i.discount })),
         subtotal: s.subtotal, discount: s.discount, tax: s.taxTotal, total: s.total, amountPaid: s.amountPaid, changeDue: s.changeDue,
         footer: settings.receiptFooter,

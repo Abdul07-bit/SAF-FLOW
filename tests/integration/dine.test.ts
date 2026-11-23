@@ -101,6 +101,25 @@ describe("SAF Dine Flow (Basic)", () => {
     expectError(await api("POST", `/public/dine/menu/${m.table.qrToken}/order`, { body: { items: [{ menuItemId: m.biryani.id, qty: 1 }] } }), 409);
   });
 
+  it("split settle: UPI + cash parts are counted separately in collections and reports", async () => {
+    const biz = await createBusiness([{ productCode: "dine", tier: "BASIC" }]);
+    const m = await setupMenu(biz.manager);
+    const o = await api("POST", "/dine/orders", { cookie: biz.manager, body: { type: "TAKEAWAY", source: "POS", items: [{ menuItemId: m.biryani.id, qty: 3 }] } });
+    expect(o.status, JSON.stringify(o.body)).toBe(201);
+    const total = 3 * 22000 + Math.round(3 * 22000 * 0.05); // 693.00
+
+    // Checked against the total after discount: 400 + 293 is wrong once Rs 10 is taken off
+    expectError(await api("POST", `/dine/orders/${o.body.id}/settle`, { cookie: biz.manager, body: { paymentMethod: "SPLIT", discount: 1000, split: [{ method: "UPI", amount: 40000 }, { method: "CASH", amount: total - 40000 }] } }), 400);
+    const settled = await api("POST", `/dine/orders/${o.body.id}/settle`, { cookie: biz.manager, body: { paymentMethod: "SPLIT", split: [{ method: "UPI", amount: 40000 }, { method: "CASH", amount: total - 40000 }] } });
+    expect(settled.status, JSON.stringify(settled.body)).toBe(200);
+    expect(settled.body.order).toMatchObject({ status: "PAID", paymentMethod: "SPLIT", total });
+
+    const board = await api("GET", "/dine/cashier/board", { cookie: biz.manager });
+    expect(board.body.collections).toMatchObject({ total, count: 1, byMethod: { UPI: 40000, CASH: total - 40000 } });
+    const report = await api("GET", "/dine/reports/sales", { cookie: biz.manager });
+    expect(Object.fromEntries(report.body.paymentSplit.map((x: any) => [x.method, x.amount]))).toEqual({ UPI: 40000, CASH: total - 40000 });
+  });
+
   it("QR menu disappears when the subscription is suspended", async () => {
     const biz = await createBusiness([{ productCode: "dine", tier: "BASIC" }]);
     const m = await setupMenu(biz.manager);

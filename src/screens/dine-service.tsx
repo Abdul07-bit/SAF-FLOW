@@ -10,8 +10,13 @@ import { BarList, ChartCard, ColumnChart, fmtCompactINR, KpiRow, StatTile } from
 import { useProduct } from "@/components/product-context";
 import { ShopUpiQr } from "@/components/shop-upi";
 import { Badge, Button, Card, DataTable, Empty, Field, Input, Loadable, Modal, Notice, PageHeader, Select, StatusBadge, toast, useAction, cx } from "@/components/ui";
+import { newSplit, SplitPaymentEditor, splitParts, splitReady, type SplitRow } from "@/components/split-payment";
+import { describePayment } from "@/shared/tender";
 
 export const TENDERS = ["CASH", "UPI", "CARD", "WALLET", "CREDIT", "OTHER"] as const;
+/** Tenders for a sale or bill: the above plus "SPLIT" (e.g. Rs 400 UPI + Rs 300 cash). Not for stay payments. */
+export const SALE_TENDERS = [...TENDERS, "SPLIT"] as const;
+export const tenderLabel = (m: string) => (m === "SPLIT" ? "Split (UPI + Cash...)" : humanize(m));
 
 // ---------------------------------------------------------------------------
 // Dashboard
@@ -167,7 +172,7 @@ export function Receipt({ result, onClose }: { result: { order: any; invoiceUrl:
       <Check className="mx-auto h-10 w-10 rounded-full bg-emerald-100 p-2 text-emerald-700" aria-hidden />
       <div>
         <p className="text-lg font-semibold text-slate-900">Paid {formatINR(result.order.total)}</p>
-        <p className="text-sm text-slate-600">Invoice {result.order.invoiceNo} - {humanize(result.order.paymentMethod)}</p>
+        <p className="text-sm text-slate-600">Invoice {result.order.invoiceNo} - {describePayment(result.order)}</p>
       </div>
       <a href={result.invoiceUrl} target="_blank" rel="noreferrer"><Button className="w-full"><ExternalLink className="h-4 w-4" /> Open / print invoice</Button></a>
       {p.has("whatsapp_invoice") && (
@@ -186,25 +191,30 @@ export function SettleForm({ order, onSettled }: { order: any; onSettled: (r: an
   const [method, setMethod] = useState<string>("CASH");
   const [discount, setDiscount] = useState(order.discount ? String(order.discount / 100) : "");
   const [phone, setPhone] = useState(order.customerPhone ?? "");
+  const [split, setSplit] = useState<SplitRow[]>(newSplit);
   const [busy, run] = useAction();
   const live = order.items.filter((i: any) => i.status !== "CANCELLED");
   const t = computeTotals(live.map((i: any) => ({ unitPrice: i.unitPrice, qty: i.qty, taxRate: i.taxRate })), rupeesToPaise(discount || 0));
+  const isSplit = method === "SPLIT";
+  const splitUpi = isSplit ? splitParts(split).filter((x) => x.method === "UPI").reduce((a, x) => a + x.amount, 0) : 0;
   return (
     <div className="space-y-3 rounded-lg bg-slate-50 p-3">
       <Totals subtotal={t.subtotal} discount={t.discount} tax={t.taxTotal} total={t.total} />
       <div className="grid grid-cols-2 gap-2">
-        <Field label="Payment"><Select value={method} onChange={(e) => setMethod(e.target.value)}>{TENDERS.map((m) => <option key={m} value={m}>{humanize(m)}</option>)}</Select></Field>
+        <Field label="Payment"><Select value={method} onChange={(e) => setMethod(e.target.value)}>{SALE_TENDERS.map((m) => <option key={m} value={m}>{tenderLabel(m)}</option>)}</Select></Field>
         {p.can("billing.discount") && <Field label="Discount (Rs)"><Input type="number" min="0" step="0.01" value={discount} onChange={(e) => setDiscount(e.target.value)} /></Field>}
         <Field label="Customer phone" className="col-span-2"><Input type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="For the WhatsApp invoice" /></Field>
       </div>
+      {isSplit && <SplitPaymentEditor total={t.total} rows={split} onChange={setSplit} />}
       {method === "UPI" && <ShopUpiQr base={p.base} amount={t.total} note={`Order ${order.orderNo}`} />}
+      {isSplit && splitUpi > 0 && <ShopUpiQr base={p.base} amount={splitUpi} note={`Order ${order.orderNo}`} />}
       {order.publicToken && (
         <a href={`/invoice/dine/${order.publicToken}`} target="_blank" rel="noreferrer" className="flex items-center justify-center gap-1.5 text-sm font-medium text-brand underline-offset-2 hover:underline">
           <ExternalLink className="h-4 w-4" /> Print / share bill (with UPI QR)
         </a>
       )}
-      <Button variant="primary" size="lg" className="w-full" loading={busy} disabled={!live.length}
-        onClick={() => run(async () => onSettled(await api(`/dine/orders/${order.id}/settle`, { body: { paymentMethod: method, discount: rupeesToPaise(discount || 0), customerPhone: phone || undefined } })))}>
+      <Button variant="primary" size="lg" className="w-full" loading={busy} disabled={!live.length || (isSplit && !splitReady(split, t.total))}
+        onClick={() => run(async () => onSettled(await api(`/dine/orders/${order.id}/settle`, { body: { paymentMethod: method, ...(isSplit ? { split: splitParts(split) } : {}), discount: rupeesToPaise(discount || 0), customerPhone: phone || undefined } })))}>
         Settle {formatINR(t.total)}
       </Button>
     </div>
@@ -305,13 +315,16 @@ export function DinePos() {
   const [customerName, setName] = useState("");
   const [method, setMethod] = useState("CASH");
   const [discount, setDiscount] = useState("");
+  const [split, setSplit] = useState<SplitRow[]>(newSplit);
   const [receipt, setReceipt] = useState<any | null>(null);
   const [busy, run] = useAction();
   const t = computeTotals(cart.lines, rupeesToPaise(discount || 0));
   const canSettle = p.can("billing.settle");
+  const isSplit = method === "SPLIT";
+  const splitUpi = isSplit ? splitParts(split).filter((x) => x.method === "UPI").reduce((a, x) => a + x.amount, 0) : 0;
 
   const create = () => api<any>("/dine/orders", { body: { type, tableId: type === "DINE_IN" ? tableId || null : null, source: "POS", customerName: customerName || undefined, items: cart.wire, sendToKitchen: true } });
-  const reset = () => { cart.clear(); setName(""); setDiscount(""); setTableId(""); void tables.reload(); };
+  const reset = () => { cart.clear(); setName(""); setDiscount(""); setTableId(""); setMethod("CASH"); setSplit(newSplit()); void tables.reload(); };
 
   return (
     <>
@@ -331,15 +344,17 @@ export function DinePos() {
           <Totals subtotal={t.subtotal} discount={t.discount} tax={t.taxTotal} total={t.total} />
           {canSettle && (
             <div className="mt-3 grid grid-cols-2 gap-2">
-              <Field label="Payment"><Select value={method} onChange={(e) => setMethod(e.target.value)}>{TENDERS.map((m) => <option key={m} value={m}>{humanize(m)}</option>)}</Select></Field>
+              <Field label="Payment"><Select value={method} onChange={(e) => setMethod(e.target.value)}>{SALE_TENDERS.map((m) => <option key={m} value={m}>{tenderLabel(m)}</option>)}</Select></Field>
               {p.can("billing.discount") && <Field label="Discount (Rs)"><Input type="number" min="0" step="0.01" value={discount} onChange={(e) => setDiscount(e.target.value)} /></Field>}
             </div>
           )}
+          {canSettle && isSplit && <div className="mt-3"><SplitPaymentEditor total={t.total} rows={split} onChange={setSplit} /></div>}
           {canSettle && method === "UPI" && cart.lines.length > 0 && <div className="mt-3"><ShopUpiQr base={p.base} amount={t.total} /></div>}
+          {canSettle && isSplit && splitUpi > 0 && cart.lines.length > 0 && <div className="mt-3"><ShopUpiQr base={p.base} amount={splitUpi} /></div>}
           <div className="mt-3 space-y-2">
             {canSettle && (
-              <Button variant="primary" size="lg" className="w-full" loading={busy} disabled={!cart.lines.length || (type === "DINE_IN" && !tableId)}
-                onClick={() => run(async () => { const o = await create(); setReceipt(await api(`/dine/orders/${o.id}/settle`, { body: { paymentMethod: method, discount: rupeesToPaise(discount || 0) } })); reset(); })}>
+              <Button variant="primary" size="lg" className="w-full" loading={busy} disabled={!cart.lines.length || (type === "DINE_IN" && !tableId) || (isSplit && !splitReady(split, t.total))}
+                onClick={() => run(async () => { const o = await create(); setReceipt(await api(`/dine/orders/${o.id}/settle`, { body: { paymentMethod: method, ...(isSplit ? { split: splitParts(split) } : {}), discount: rupeesToPaise(discount || 0) } })); reset(); })}>
                 Bill & settle {formatINR(t.total)}
               </Button>
             )}
@@ -553,7 +568,7 @@ export function DineCashier() {
                     { key: "inv", label: "Invoice", render: (r: any) => <span className="font-mono text-[13px]">{r.invoiceNo}</span> },
                     { key: "t", label: "Table", render: (r: any) => r.table?.name ?? "-" },
                     { key: "time", label: "Time", render: (r: any) => fmtTime(r.paidAt) },
-                    { key: "m", label: "Method", render: (r: any) => humanize(r.paymentMethod) },
+                    { key: "m", label: "Method", render: (r: any) => describePayment(r) },
                     { key: "a", label: "Amount", align: "right", render: (r: any) => formatINR(r.total) },
                   ]} />
               </Card>

@@ -15,6 +15,7 @@ import { tenantEntitled } from "../core/access";
 import { getProductSettings } from "../core/settings";
 import { fileUrl } from "../core/storage";
 import { whatsappLink } from "../core/notify";
+import { addTenders, assertSplitMatches, describePayment, splitPartsSchema } from "@/shared/tender";
 
 const isoDate = z.string().refine(isISODate, "Use YYYY-MM-DD");
 const appUrl = () => (process.env.APP_URL || "http://localhost:3000").replace(/\/$/, "");
@@ -167,7 +168,7 @@ route({
     const items: Record<string, { name: string; qty: number; revenue: number }> = {};
     for (const o of paid) {
       hourly[Math.floor(istMinutes(o.paidAt!) / 60)].sales += o.total;
-      methods[o.paymentMethod ?? "OTHER"] = (methods[o.paymentMethod ?? "OTHER"] ?? 0) + o.total;
+      addTenders(methods, o);
       for (const i of o.items.filter((x) => x.status !== "CANCELLED")) {
         items[i.menuItemId] ??= { name: i.name, qty: 0, revenue: 0 };
         items[i.menuItemId].qty += i.qty;
@@ -229,7 +230,7 @@ route({
       ctx.db.dineOrder.findMany({ where: { ...scope, status: "PAID", paidAt: today }, orderBy: { paidAt: "desc" }, include: { table: { select: { name: true } } } }),
     ]);
     const byMethod: Record<string, number> = {};
-    for (const o of settled) byMethod[o.paymentMethod ?? "OTHER"] = (byMethod[o.paymentMethod ?? "OTHER"] ?? 0) + o.total;
+    for (const o of settled) addTenders(byMethod, o);
     return {
       open,
       settled: settled.slice(0, 50),
@@ -437,7 +438,9 @@ route({
   method: "POST", path: "/dine/orders/:id/settle", tag: "dine", summary: "Settle the bill: payment, invoice number, stock deduction, free table",
   auth: { product: "dine", feature: ["cashier", "pos"], permission: "billing.settle" },
   body: z.object({
-    paymentMethod: z.enum(["CASH", "UPI", "CARD", "WALLET", "CREDIT", "OTHER"]),
+    paymentMethod: z.enum(["CASH", "UPI", "CARD", "WALLET", "CREDIT", "OTHER", "SPLIT"]),
+    /** Required when paymentMethod = SPLIT; the parts must add up to the bill total. */
+    split: splitPartsSchema.optional(),
     discount: z.number().int().min(0).optional(),
     customerName: z.string().max(80).optional(),
     customerPhone: z.string().max(20).optional(),
@@ -448,6 +451,7 @@ route({
     if (o.items.some((i) => i.status === "PENDING_ACCEPT")) throw conflict("Accept or reject the QR-ordered items first.");
     const live = o.items.filter((i) => i.status !== "CANCELLED");
     if (!live.length) throw badRequest("The order has no items.");
+    if (ctx.body.paymentMethod === "SPLIT" && !ctx.body.split) throw badRequest("Enter the amount paid by each method for a split payment.");
     if (ctx.body.discount && ctx.body.discount !== o.discount && !ctx.can("billing.discount"))
       throw forbidden("PERMISSION_DENIED", "Your role cannot apply discounts.");
 
@@ -455,10 +459,16 @@ route({
     const seq = await nextSeq(ctx.db, ctx.tenantId, `dine-invoice-${financialYear(todayIST()).label}`);
     const invoiceNo = `${settings.invoicePrefix}/${financialYear(todayIST()).label}/${String(seq).padStart(5, "0")}`;
     await recalc(ctx.db, o.id, ctx.body.discount ?? o.discount);
+    let split: { method: string; amount: number }[] | null = null;
+    if (ctx.body.paymentMethod === "SPLIT") {
+      // Checked against the recalculated total (discount applied), inside the same transaction.
+      const { total } = await ctx.db.dineOrder.findUniqueOrThrow({ where: { id: o.id }, select: { total: true } });
+      try { split = assertSplitMatches(ctx.body.split!, total); } catch (e) { throw badRequest((e as Error).message); }
+    }
     const order = await ctx.db.dineOrder.update({
       where: { id: o.id },
       data: {
-        status: "PAID", paymentMethod: ctx.body.paymentMethod, paidAt: new Date(), settledById: ctx.user.id, invoiceNo,
+        status: "PAID", paymentMethod: ctx.body.paymentMethod, ...(split ? { paymentSplit: split } : {}), paidAt: new Date(), settledById: ctx.user.id, invoiceNo,
         ...(ctx.body.customerName ? { customerName: ctx.body.customerName } : {}),
         ...(ctx.body.customerPhone ? { customerPhone: ctx.body.customerPhone } : {}),
       },
@@ -482,7 +492,7 @@ route({
     for (const [stockItemId, qty] of deductions)
       await moveDineStock(ctx.db, ctx.tenantId, stockItemId, -qty, "SALE", { reference: ref, userId: ctx.user.id });
 
-    await ctx.audit("dine.order.settle", { type: "dine_order", id: o.id }, { invoiceNo, total: order.total, method: ctx.body.paymentMethod });
+    await ctx.audit("dine.order.settle", { type: "dine_order", id: o.id }, { invoiceNo, total: order.total, method: ctx.body.paymentMethod, ...(split ? { split } : {}) });
     const business = await ctx.db.business.findUniqueOrThrow({ where: { tenantId: ctx.tenantId } });
     return {
       order: await loadOrder(ctx, o.id),
@@ -789,7 +799,7 @@ route({
     for (const o of orders) {
       const d = istDate(o.paidAt!);
       if (days[d]) { days[d].sales += o.total; days[d].orders++; }
-      methods[o.paymentMethod ?? "OTHER"] = (methods[o.paymentMethod ?? "OTHER"] ?? 0) + o.total;
+      addTenders(methods, o);
       for (const i of o.items) {
         items[i.menuItemId] ??= { name: i.name, qty: 0, revenue: 0 };
         items[i.menuItemId].qty += i.qty;
@@ -982,7 +992,7 @@ route({
       pay: paid ? null : await shopUpi(business, order.total, `Order ${order.orderNo}`, sellerName),
       seller: { name: settings.restaurantName || business.name, address: [business.address, business.city, business.state, business.pincode].filter(Boolean).join(", "), phone: business.phone, gstin: settings.gstin || business.gstin, logoUrl: business.logoUrl },
       invoiceNo: order.invoiceNo, date: order.paidAt ?? order.createdAt, customer: { name: order.customerName, phone: order.customerPhone },
-      meta: [order.table ? `Table ${order.table.name}` : order.type.replace("_", " "), `Order #${order.orderNo}`, ...(paid ? [`Paid by ${order.paymentMethod}`] : [])],
+      meta: [order.table ? `Table ${order.table.name}` : order.type.replace("_", " "), `Order #${order.orderNo}`, ...(paid ? [`Paid by ${describePayment(order)}`] : [])],
       lines: order.items.filter((i) => i.status !== "CANCELLED").map((i) => ({ name: i.name, qty: i.qty, rate: i.unitPrice, taxRate: i.taxRate, amount: i.unitPrice * i.qty })),
       subtotal: order.subtotal, discount: order.discount, tax: order.taxTotal, total: order.total, footer: settings.receiptFooter,
     };

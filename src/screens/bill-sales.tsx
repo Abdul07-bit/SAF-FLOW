@@ -14,7 +14,9 @@ import { ShopUpiQr } from "@/components/shop-upi";
 import { RangePicker, useRange } from "@/components/range";
 import { ScanInput } from "@/components/scanner";
 import { Button, Card, DataTable, Empty, Field, Input, Loadable, Modal, Notice, PageHeader, Select, StatusBadge, toast, toastError, useAction } from "@/components/ui";
-import { TENDERS } from "./dine-service";
+import { SALE_TENDERS, tenderLabel } from "./dine-service";
+import { newSplit, SplitPaymentEditor, splitParts, splitReady, type SplitRow } from "@/components/split-payment";
+import { describePayment } from "@/shared/tender";
 
 // ---------------------------------------------------------------------------
 // Dashboard
@@ -89,6 +91,7 @@ export function BillPos() {
   const [method, setMethod] = useState("CASH");
   const [discount, setDiscount] = useState("");
   const [received, setReceived] = useState("");
+  const [split, setSplit] = useState<SplitRow[]>(newSplit);
   const [done, setDone] = useState<any | null>(null);
   const [busy, run] = useAction();
 
@@ -107,8 +110,16 @@ export function BillPos() {
   const setQty = (id: string, qty: number) => setLines((ls) => ls.flatMap((l) => (l.productId !== id ? [l] : qty <= 0 ? [] : [{ ...l, qty }])));
 
   const t = computeTotals(lines, rupeesToPaise(discount || 0));
-  const paid = method === "CASH" && received ? rupeesToPaise(received) : t.total;
+  const isSplit = method === "SPLIT";
+  const parts = isSplit ? splitParts(split) : [];
+  const splitCash = parts.filter((x) => x.method === "CASH").reduce((a, x) => a + x.amount, 0);
+  const splitUpi = parts.filter((x) => x.method === "UPI").reduce((a, x) => a + x.amount, 0);
+  // Cash received applies to a cash bill, or to the cash part of a split (change comes from that part only).
+  const cashDue = method === "CASH" ? t.total : splitCash;
+  const takesCash = cashDue > 0;
+  const paid = takesCash && received ? t.total - cashDue + rupeesToPaise(received) : t.total;
   const change = Math.max(0, paid - t.total);
+  const splitOk = !isSplit || splitReady(split, t.total);
   const over = lines.filter((l) => l.qty > l.stock && !p.settings.allowNegativeStock);
   const wantsCustomer = phone.replace(/\D/g, "").length >= 7;
   const canSaveCustomer = p.has("customers") && p.can("customers.manage");
@@ -118,13 +129,14 @@ export function BillPos() {
     const sale = await api<any>("/bill/sales", {
       body: {
         items: lines.map((l) => ({ productId: l.productId, qty: l.qty })), discount: rupeesToPaise(discount || 0), paymentMethod: method,
-        ...(method === "CASH" && received ? { amountPaid: rupeesToPaise(received) } : {}),
+        ...(isSplit ? { split: parts } : {}),
+        ...(takesCash && received ? { amountPaid: paid } : {}),
         ...(wantsCustomer && canSaveCustomer ? { customer: { name: custName.trim() || "Customer", phone: phone.trim() } } : {}),
         ...(counterId ? { counterId } : {}),
       },
     });
     setDone(sale);
-    setLines([]); setDiscount(""); setReceived(""); setPhone(""); setCustName(""); setQ("");
+    setLines([]); setDiscount(""); setReceived(""); setSplit(newSplit()); setMethod("CASH"); setPhone(""); setCustName(""); setQ("");
   });
 
   return (
@@ -190,11 +202,13 @@ export function BillPos() {
             <div className="flex justify-between border-t border-slate-200 pt-2 text-xl font-semibold"><dt>Total</dt><dd className="tnum">{formatINR(t.total)}</dd></div>
           </dl>
           <div className="mt-3 grid grid-cols-2 gap-2">
-            <Field label="Payment"><Select value={method} onChange={(e) => setMethod(e.target.value)}>{TENDERS.map((m) => <option key={m} value={m}>{humanize(m)}</option>)}</Select></Field>
+            <Field label="Payment"><Select value={method} onChange={(e) => setMethod(e.target.value)}>{SALE_TENDERS.map((m) => <option key={m} value={m}>{tenderLabel(m)}</option>)}</Select></Field>
             <Field label="Discount (Rs)"><Input type="number" min="0" step="0.01" value={discount} onChange={(e) => setDiscount(e.target.value)} /></Field>
-            {method === "CASH" && <Field label="Cash received (Rs)" className="col-span-2"><Input type="number" min="0" step="0.01" value={received} onChange={(e) => setReceived(e.target.value)} placeholder={String(t.total / 100)} /></Field>}
-            {method === "CASH" && change > 0 && <p className="col-span-2 rounded-lg bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-900">Return change: {formatINR(change)}</p>}
+            {isSplit && <div className="col-span-2"><SplitPaymentEditor total={t.total} rows={split} onChange={setSplit} /></div>}
+            {takesCash && <Field label={isSplit ? "Cash note received (Rs)" : "Cash received (Rs)"} className="col-span-2"><Input type="number" min="0" step="0.01" value={received} onChange={(e) => setReceived(e.target.value)} placeholder={String(cashDue / 100)} /></Field>}
+            {takesCash && change > 0 && <p className="col-span-2 rounded-lg bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-900">Return change: {formatINR(change)}</p>}
             {method === "UPI" && lines.length > 0 && <div className="col-span-2"><ShopUpiQr base={p.base} amount={t.total} /></div>}
+            {isSplit && splitUpi > 0 && lines.length > 0 && <div className="col-span-2"><ShopUpiQr base={p.base} amount={splitUpi} /></div>}
             <Field label="Customer phone"><Input type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="Optional" /></Field>
             <Field label="Customer name"><Input value={custName} onChange={(e) => setCustName(e.target.value)} placeholder="Optional" /></Field>
             {(counters.data?.items.length ?? 0) > 1 && (
@@ -202,7 +216,7 @@ export function BillPos() {
             )}
           </div>
           {over.length > 0 && <div className="mt-3"><Notice tone="bad">Reduce the quantity of {over.map((l) => l.name).join(", ")} - not enough stock.</Notice></div>}
-          <Button variant="primary" size="lg" className="mt-3 w-full" loading={busy} disabled={!lines.length || over.length > 0 || (method === "CASH" && !!received && paid < t.total)} onClick={complete}>
+          <Button variant="primary" size="lg" className="mt-3 w-full" loading={busy} disabled={!lines.length || over.length > 0 || !splitOk || (takesCash && !!received && paid < t.total)} onClick={complete}>
             Complete sale {formatINR(t.total)}
           </Button>
         </Card>
@@ -213,7 +227,7 @@ export function BillPos() {
           <div className="space-y-4 text-center">
             <Check className="mx-auto h-10 w-10 rounded-full bg-emerald-100 p-2 text-emerald-700" aria-hidden />
             <div>
-              <p className="text-lg font-semibold text-slate-900">{formatINR(done.total)} - {humanize(done.paymentMethod)}</p>
+              <p className="text-lg font-semibold text-slate-900">{formatINR(done.total)} - {describePayment(done)}</p>
               <p className="text-sm text-slate-600">Invoice {done.invoiceNo}</p>
               {done.changeDue > 0 && <p className="mt-1 text-base font-semibold text-emerald-800">Return change {formatINR(done.changeDue)}</p>}
             </div>
@@ -251,7 +265,7 @@ export function BillCashier() {
                   { key: "i", label: "Invoice", render: (r: any) => <span className="font-mono text-[13px]">{r.invoiceNo}</span> },
                   { key: "t", label: "Time", render: (r: any) => fmtTime(r.createdAt) },
                   { key: "c", label: "Customer", render: (r: any) => r.customer?.name ?? "-" },
-                  { key: "m", label: "Method", render: (r: any) => humanize(r.paymentMethod) },
+                  { key: "m", label: "Method", render: (r: any) => describePayment(r) },
                   { key: "a", label: "Total", align: "right", render: (r: any) => formatINR(r.total) },
                   { key: "s", label: "Status", render: (r: any) => <StatusBadge value={r.status} /> },
                   { key: "x", label: "", align: "right", render: (r: any) => <a href={`/invoice/bill/${r.publicToken}`} target="_blank" rel="noreferrer" className="text-sm font-medium text-brand underline">Invoice</a> },
@@ -290,7 +304,7 @@ export function BillSales() {
                 { key: "c", label: "Customer", render: (r) => (r.customer ? <>{r.customer.name}<span className="block text-xs text-slate-500">{r.customer.phone}</span></> : "-") },
                 { key: "u", label: "Cashier", render: (r) => r.cashier?.fullName ?? "-" },
                 { key: "n", label: "Items", align: "right", render: (r) => r.items.length },
-                { key: "m", label: "Method", render: (r) => humanize(r.paymentMethod) },
+                { key: "m", label: "Method", render: (r) => describePayment(r) },
                 { key: "a", label: "Total", align: "right", render: (r) => formatINR(r.total) },
                 { key: "s", label: "Status", render: (r) => <>{<StatusBadge value={r.status} />}{r.voidReason && <span className="block text-xs text-slate-500">{r.voidReason}</span>}</> },
                 {
@@ -337,7 +351,7 @@ function CustomerHistory({ customer, onClose }: { customer: any; onClose: () => 
               columns={[
                 { key: "i", label: "Invoice", render: (r: any) => <a className="font-mono text-[13px] text-brand underline" href={`/invoice/bill/${r.publicToken}`} target="_blank" rel="noreferrer">{r.invoiceNo}</a> },
                 { key: "t", label: "Date", render: (r: any) => fmtDateTime(r.createdAt) },
-                { key: "m", label: "Method", render: (r: any) => humanize(r.paymentMethod) },
+                { key: "m", label: "Method", render: (r: any) => describePayment(r) },
                 { key: "a", label: "Total", align: "right", render: (r: any) => formatINR(r.total) },
               ]} />
           </>

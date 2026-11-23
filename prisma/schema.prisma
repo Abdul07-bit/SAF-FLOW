@@ -89,6 +89,7 @@ enum TenderType {
   WALLET
   CREDIT
   OTHER
+  SPLIT // paid with more than one tender; parts are in payment_split
 }
 
 enum EmployeeStatus {
@@ -1024,6 +1025,8 @@ model DineOrder {
   discount        Int             @default(0)
   total           Int             @default(0)
   paymentMethod   TenderType?     @map("payment_method")
+  /// Set when paymentMethod = SPLIT: [{ method, amount (paise) }], parts sum to total.
+  paymentSplit    Json?           @map("payment_split")
   paidAt          DateTime?       @map("paid_at")
   settledById     String?         @map("settled_by_id") @db.Uuid
   invoiceNo       String?         @map("invoice_no")
@@ -1568,6 +1571,8 @@ model BillSale {
   taxTotal      Int        @map("tax_total")
   total         Int
   paymentMethod TenderType @map("payment_method")
+  /// Set when paymentMethod = SPLIT: [{ method, amount (paise) }], parts sum to total.
+  paymentSplit  Json?      @map("payment_split")
   amountPaid    Int        @map("amount_paid")
   changeDue     Int        @default(0) @map("change_due")
   status        SaleStatus @default(COMPLETED)

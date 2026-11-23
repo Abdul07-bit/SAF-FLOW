@@ -11698,8 +11698,38 @@
                       "CARD",
                       "WALLET",
                       "CREDIT",
-                      "OTHER"
+                      "OTHER",
+                      "SPLIT"
                     ]
+                  },
+                  "split": {
+                    "minItems": 2,
+                    "maxItems": 4,
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "method": {
+                          "type": "string",
+                          "enum": [
+                            "CASH",
+                            "UPI",
+                            "CARD",
+                            "WALLET",
+                            "OTHER"
+                          ]
+                        },
+                        "amount": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 9007199254740991
+                        }
+                      },
+                      "required": [
+                        "method",
+                        "amount"
+                      ]
+                    }
                   },
                   "amountPaid": {
                     "type": "integer",
@@ -14822,8 +14852,38 @@
                       "CARD",
                       "WALLET",
                       "CREDIT",
-                      "OTHER"
+                      "OTHER",
+                      "SPLIT"
                     ]
+                  },
+                  "split": {
+                    "minItems": 2,
+                    "maxItems": 4,
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "method": {
+                          "type": "string",
+                          "enum": [
+                            "CASH",
+                            "UPI",
+                            "CARD",
+                            "WALLET",
+                            "OTHER"
+                          ]
+                        },
+                        "amount": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 9007199254740991
+                        }
+                      },
+                      "required": [
+                        "method",
+                        "amount"
+                      ]
+                    }
                   },
                   "discount": {
                     "type": "integer",

@@ -67,6 +67,42 @@ describe("SAF Bill Flow (Basic)", () => {
     expect(sales.body.items).toHaveLength(1);
   });
 
+  it("split payment: UPI + cash parts land under their own tender in the drawer and reports", async () => {
+    const biz = await createBusiness([{ productCode: "bill", tier: "BASIC" }]);
+    const { soap } = await setupCatalog(biz.manager);
+    const cashier = await createStaff(biz.manager, "bill", "c1", [{ product: "bill", roleCode: "cashier" }]);
+    const items = [{ productId: soap.id, qty: 2 }]; // total 236.00
+
+    // Parts must add up to the total, use two different methods, and be present at all
+    expectError(await api("POST", "/bill/sales", { cookie: cashier.cookie, body: { items, paymentMethod: "SPLIT", split: [{ method: "UPI", amount: 13600 }, { method: "CASH", amount: 5000 }] } }), 400);
+    expectError(await api("POST", "/bill/sales", { cookie: cashier.cookie, body: { items, paymentMethod: "SPLIT", split: [{ method: "CASH", amount: 13600 }, { method: "CASH", amount: 10000 }] } }), 400);
+    expectError(await api("POST", "/bill/sales", { cookie: cashier.cookie, body: { items, paymentMethod: "SPLIT" } }), 400);
+    expectError(await api("POST", "/bill/sales", { cookie: cashier.cookie, body: { items, paymentMethod: "SPLIT", split: [{ method: "UPI", amount: 13600 }, { method: "CREDIT", amount: 10000 }] } }), 400);
+
+    // UPI 136 + cash 100, customer hands a 200 note for the cash part -> change 100
+    const sale = await api("POST", "/bill/sales", {
+      cookie: cashier.cookie,
+      body: { items, paymentMethod: "SPLIT", split: [{ method: "UPI", amount: 13600 }, { method: "CASH", amount: 10000 }], amountPaid: 13600 + 20000 },
+    });
+    expect(sale.status, JSON.stringify(sale.body)).toBe(201);
+    expect(sale.body).toMatchObject({ total: 23600, paymentMethod: "SPLIT", changeDue: 10000 });
+    expect(sale.body.paymentSplit).toEqual([{ method: "UPI", amount: 13600 }, { method: "CASH", amount: 10000 }]);
+
+    // A plain cash sale alongside it
+    await api("POST", "/bill/sales", { cookie: cashier.cookie, body: { items: [{ productId: soap.id, qty: 1 }], paymentMethod: "CASH" } });
+
+    const dash = await api("GET", "/bill/cashier", { cookie: cashier.cookie });
+    expect(dash.body.totals).toMatchObject({ count: 2, amount: 23600 + 11800, cashInDrawer: 10000 + 11800 });
+    expect(dash.body.totals.byMethod).toEqual({ UPI: 13600, CASH: 21800 });
+
+    const report = await api("GET", "/bill/reports/sales", { cookie: biz.manager });
+    const split = Object.fromEntries(report.body.paymentSplit.map((m: any) => [m.method, m.amount]));
+    expect(split).toEqual({ UPI: 13600, CASH: 21800 });
+
+    const inv = await api("GET", `/public/invoice/bill/${sale.body.publicToken}`);
+    expect(inv.body.meta.join(" ")).toContain("Split: UPI");
+  });
+
   it("two counters cannot both sell the last unit", async () => {
     const biz = await createBusiness([{ productCode: "bill", tier: "BASIC" }]);
     const { soap } = await setupCatalog(biz.manager, 1);
