@@ -80,7 +80,7 @@ export function Notifications() {
         {!!n.data?.unread && <span className="absolute right-1 top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-red-600 px-1 text-[10px] font-semibold text-white">{n.data.unread}</span>}
       </button>
       {open && (
-        <div className="absolute right-0 z-40 mt-1 max-h-96 w-80 overflow-y-auto rounded-xl border border-slate-200 bg-white shadow-lg">
+        <div className="fixed inset-x-3 top-14 z-40 max-h-[70vh] overflow-y-auto sm:absolute sm:inset-x-auto sm:right-0 sm:top-auto sm:mt-1 sm:max-h-96 sm:w-80 rounded-xl border border-slate-200 bg-white shadow-lg">
           <p className="border-b border-slate-100 px-4 py-2 text-sm font-semibold text-slate-900">Notifications</p>
           {!n.data?.items.length && <p className="px-4 py-6 text-center text-sm text-slate-500">You are all caught up.</p>}
           {n.data?.items.map((i) => (

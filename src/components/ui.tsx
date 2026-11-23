@@ -40,7 +40,7 @@ export function Button({
   );
 }
 
-const CONTROL = "w-full rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-900 placeholder:text-slate-400 focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/25 disabled:bg-slate-100";
+const CONTROL = "w-full rounded-lg border border-slate-300 bg-white px-3 text-base text-slate-900 sm:text-sm placeholder:text-slate-400 focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/25 disabled:bg-slate-100";
 
 export function Input({ className, ...rest }: InputHTMLAttributes<HTMLInputElement>) {
   return <input className={cx(CONTROL, "h-10", className)} {...rest} />;
