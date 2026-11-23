@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { BellRing, Check, ChefHat, ExternalLink, MessageCircle, Minus, Plus, QrCode, Search, Utensils } from "lucide-react";
 import { fmtDateTime, fmtTime, todayIST } from "@/lib/dates";
 import { computeTotals, formatINR, rupeesToPaise } from "@/lib/money";
@@ -12,6 +12,7 @@ import { ShopUpiQr } from "@/components/shop-upi";
 import { Badge, Button, Card, DataTable, Empty, Field, Input, Loadable, Modal, Notice, PageHeader, Select, StatusBadge, toast, useAction, cx } from "@/components/ui";
 import { newSplit, SplitPaymentEditor, splitParts, splitReady, type SplitRow } from "@/components/split-payment";
 import { describePayment } from "@/shared/tender";
+import { MobileBillBar } from "@/components/mobile-bill-bar";
 
 export const TENDERS = ["CASH", "UPI", "CARD", "WALLET", "CREDIT", "OTHER"] as const;
 /** Tenders for a sale or bill: the above plus "SPLIT" (e.g. Rs 400 UPI + Rs 300 cash). Not for stay payments. */
@@ -308,6 +309,7 @@ export function OrderModal({ orderId, onClose, onChanged }: { orderId: string; o
 
 export function DinePos() {
   const p = useProduct();
+  const billRef = useRef<HTMLDivElement>(null);
   const cart = useCart();
   const tables = useApi<{ items: any[] }>("/dine/tables?pageSize=300");
   const [type, setType] = useState("TAKEAWAY");
@@ -331,7 +333,8 @@ export function DinePos() {
       <PageHeader title="POS billing" description="Quick counter billing. Items go to the kitchen display as soon as the order is placed." />
       <div className="grid gap-4 lg:grid-cols-[1fr_22rem]">
         <Card><MenuPicker onAdd={cart.add} counts={Object.fromEntries(cart.lines.map((l) => [l.menuItemId, l.qty]))} /></Card>
-        <Card title="Current bill" className="lg:sticky lg:top-20 lg:self-start">
+        <div ref={billRef} className="scroll-mt-20 lg:sticky lg:top-20 lg:self-start">
+        <Card title="Current bill">
           <div className="grid grid-cols-2 gap-2">
             <Field label="Order type"><Select value={type} onChange={(e) => setType(e.target.value)}><option value="TAKEAWAY">Takeaway</option><option value="DINE_IN">Dine-in</option><option value="DELIVERY">Delivery</option></Select></Field>
             {type === "DINE_IN" ? (
@@ -363,7 +366,9 @@ export function DinePos() {
             </Button>
           </div>
         </Card>
+        </div>
       </div>
+      <MobileBillBar count={cart.lines.length} total={t.total} target={billRef} />
       <Modal open={!!receipt} onClose={() => setReceipt(null)} title="Bill settled" size="sm">{receipt && <Receipt result={receipt} onClose={() => setReceipt(null)} />}</Modal>
     </>
   );

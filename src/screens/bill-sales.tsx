@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Check, ExternalLink, Minus, Plus, Search, Trash2 } from "lucide-react";
 import { fmtDate, fmtDateTime, fmtTime } from "@/lib/dates";
 import { computeTotals, formatINR, rupeesToPaise } from "@/lib/money";
@@ -17,6 +17,7 @@ import { Button, Card, DataTable, Empty, Field, Input, Loadable, Modal, Notice, 
 import { SALE_TENDERS, tenderLabel } from "./dine-service";
 import { newSplit, SplitPaymentEditor, splitParts, splitReady, type SplitRow } from "@/components/split-payment";
 import { describePayment } from "@/shared/tender";
+import { MobileBillBar } from "@/components/mobile-bill-bar";
 
 // ---------------------------------------------------------------------------
 // Dashboard
@@ -81,6 +82,7 @@ interface PosLine {
 
 export function BillPos() {
   const p = useProduct();
+  const billRef = useRef<HTMLDivElement>(null);
   const [lines, setLines] = useState<PosLine[]>([]);
   const [q, setQ] = useState("");
   const results = useApi<{ items: any[] }>(q.trim().length >= 2 ? `/bill/products${qs({ q: q.trim(), pageSize: 12 })}` : null);
@@ -194,7 +196,8 @@ export function BillPos() {
           </Card>
         </div>
 
-        <Card title="Payment" className="lg:sticky lg:top-20 lg:self-start">
+        <div ref={billRef} className="scroll-mt-20 lg:sticky lg:top-20 lg:self-start">
+        <Card title="Payment">
           <dl className="space-y-1 text-sm">
             <div className="flex justify-between"><dt className="text-slate-600">Subtotal</dt><dd className="tnum">{formatINR(t.subtotal)}</dd></div>
             {t.discount > 0 && <div className="flex justify-between"><dt className="text-slate-600">Discount</dt><dd className="tnum">- {formatINR(t.discount)}</dd></div>}
@@ -220,7 +223,9 @@ export function BillPos() {
             Complete sale {formatINR(t.total)}
           </Button>
         </Card>
+        </div>
       </div>
+      <MobileBillBar count={lines.length} total={t.total} target={billRef} />
 
       <Modal open={!!done} onClose={() => setDone(null)} title="Sale completed" size="sm">
         {done && (
