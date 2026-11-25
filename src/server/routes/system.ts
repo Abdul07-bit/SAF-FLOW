@@ -12,7 +12,9 @@ route({
   method: "GET", path: "/health", tag: "system", summary: "Liveness / readiness probe", auth: { public: true },
   handler: async () => {
     await withPlatform((db) => db.$queryRaw`SELECT 1`);
-    return { ok: true, time: new Date() };
+    // Which build is serving: lets the deploy pipeline wait for the new version.
+    const commit = (process.env.VERCEL_GIT_COMMIT_SHA || process.env.SAF_COMMIT_SHA || "").slice(0, 12) || null;
+    return { ok: true, time: new Date(), commit };
   },
 });
 

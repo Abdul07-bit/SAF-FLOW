@@ -2,6 +2,12 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": "nextjs",
   "regions": ["bom1"],
+  "git": {
+    "deploymentEnabled": {
+      "main": false,
+      "staging": false
+    }
+  },
   "crons": [
     { "path": "/api/jobs/renewals", "schedule": "30 20 * * *" }
   ]

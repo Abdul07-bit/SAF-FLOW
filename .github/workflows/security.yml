@@ -13,7 +13,7 @@ name: security
 
 on:
   push:
-    branches: [main, "security/**"]
+    branches: [main, staging, "security/**"]
   pull_request:
   schedule:
     - cron: "30 1 * * *" # nightly: catches newly published CVEs

@@ -1,0 +1,168 @@
+# SAF Flow deployments: staging (automatic) and production (manual only).
+#
+# Vercel still builds and hosts the app. This workflow only decides WHEN:
+# vercel.json turns off automatic deploys of `main` and `staging`, so a
+# release always goes in this order:
+#
+#   1. every CI check on the commit has passed (security.yml, gitleaks.yml)
+#   2. database migrations are applied to THAT environment's database
+#   3. the Vercel deploy hook builds the branch
+#   4. /api/health reports the new commit, and the sign-in page loads
+#
+# Staging:    runs on every push to `staging`.
+# Production: never automatic. Actions > deploy > Run workflow, branch `main`,
+#             target `production`, and type `deploy production` to confirm.
+#
+# Secrets (Settings > Secrets and variables > Actions), one set per environment,
+# see docs/ENVIRONMENTS.md:
+#   STAGING_MIGRATE_URL / PRODUCTION_MIGRATE_URL      schema-owner DB URL (session pooler, 5432)
+#   STAGING_DEPLOY_HOOK / PRODUCTION_DEPLOY_HOOK      Vercel deploy hook URL for that branch
+#   STAGING_URL / PRODUCTION_URL                      e.g. https://staging.safflow.in
+#   STAGING_VERCEL_BYPASS                             optional: Vercel "Protection Bypass for Automation"
+
+name: deploy
+
+on:
+  push:
+    branches: [staging]
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Environment to deploy"
+        type: choice
+        options: [staging, production]
+        default: staging
+      confirm:
+        description: "Production only: type   deploy production"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+  checks: read
+  statuses: read
+
+# One release per environment at a time; never cancel one half-way (migrations).
+concurrency:
+  group: deploy-${{ inputs.target || 'staging' }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy ${{ inputs.target || 'staging' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    env:
+      TARGET: ${{ inputs.target || 'staging' }}
+    steps:
+      - name: Guard - right branch, explicit confirmation for production
+        env:
+          CONFIRM: ${{ inputs.confirm }}
+        run: |
+          if [ "$TARGET" = "production" ]; then
+            [ "$GITHUB_REF" = "refs/heads/main" ] || { echo "::error::Production deploys only from main (got $GITHUB_REF)."; exit 1; }
+            [ "$CONFIRM" = "deploy production" ] || { echo "::error::Type exactly 'deploy production' to confirm."; exit 1; }
+          else
+            [ "$GITHUB_REF" = "refs/heads/staging" ] || { echo "::error::Staging deploys only from the staging branch (got $GITHUB_REF)."; exit 1; }
+          fi
+          echo "Deploying $GITHUB_SHA to $TARGET"
+
+      - name: Load this environment's settings
+        env:
+          S_MIGRATE: ${{ secrets.STAGING_MIGRATE_URL }}
+          S_HOOK: ${{ secrets.STAGING_DEPLOY_HOOK }}
+          S_URL: ${{ secrets.STAGING_URL }}
+          S_BYPASS: ${{ secrets.STAGING_VERCEL_BYPASS }}
+          P_MIGRATE: ${{ secrets.PRODUCTION_MIGRATE_URL }}
+          P_HOOK: ${{ secrets.PRODUCTION_DEPLOY_HOOK }}
+          P_URL: ${{ secrets.PRODUCTION_URL }}
+        run: |
+          if [ "$TARGET" = "production" ]; then M="$P_MIGRATE"; H="$P_HOOK"; U="$P_URL"; B=""
+          else M="$S_MIGRATE"; H="$S_HOOK"; U="$S_URL"; B="$S_BYPASS"; fi
+          missing=""
+          [ -n "$M" ] || missing="$missing MIGRATE_URL"
+          [ -n "$H" ] || missing="$missing DEPLOY_HOOK"
+          [ -n "$U" ] || missing="$missing URL"
+          [ -z "$missing" ] || { echo "::error::Missing $TARGET secrets:$missing (see docs/ENVIRONMENTS.md)."; exit 1; }
+          # Staging must never point at the production database, and the reverse.
+          if [ -n "$P_MIGRATE" ] && [ -n "$S_MIGRATE" ]; then
+            pu=$(printf '%s' "$P_MIGRATE" | sed -E 's#^[a-z]+://([^:@/]*).*#\1#')
+            su=$(printf '%s' "$S_MIGRATE" | sed -E 's#^[a-z]+://([^:@/]*).*#\1#')
+            [ "$pu" != "$su" ] || { echo "::error::Staging and production migrate URLs use the same database login - they must be different Supabase projects."; exit 1; }
+          fi
+          echo "::add-mask::$M"; echo "::add-mask::$H"; [ -z "$B" ] || echo "::add-mask::$B"
+          { echo "MIGRATE_URL=$M"; echo "DEPLOY_HOOK=$H"; echo "APP_URL=${U%/}"; echo "BYPASS=$B"; } >> "$GITHUB_ENV"
+
+      - name: Wait for every CI check on this commit to pass
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          self="Deploy $TARGET"
+          for i in $(seq 1 90); do
+            runs=$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/check-runs?per_page=100" \
+              --jq "[.check_runs[] | select(.name != \"$self\")]")
+            total=$(echo "$runs" | jq 'length')
+            pending=$(echo "$runs" | jq '[.[] | select(.status != "completed")] | length')
+            bad=$(echo "$runs" | jq -r '[.[] | select(.status == "completed" and (.conclusion as $c | ["success","skipped","neutral"] | index($c) | not)) | .name] | join(", ")')
+            tests=$(echo "$runs" | jq '[.[] | select(.name | startswith("Tests")) | select(.conclusion == "success")] | length')
+            [ -z "$bad" ] || { echo "::error::Failed checks: $bad"; exit 1; }
+            if [ "$total" -gt 0 ] && [ "$pending" -eq 0 ]; then
+              [ "$tests" -gt 0 ] || { echo "::error::The test suite did not run on this commit."; exit 1; }
+              echo "All $total checks passed."; exit 0
+            fi
+            echo "Waiting: $pending of $total checks still running..."; sleep 30
+          done
+          echo "::error::Timed out waiting for CI checks."; exit 1
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+
+      - run: npm ci
+
+      - name: Migration safety (destructive statements, RLS on tenant tables)
+        run: node scripts/check-migrations.mjs
+
+      - name: Migrations - before
+        env:
+          DATABASE_URL: ${{ env.MIGRATE_URL }}
+          DIRECT_URL: ${{ env.MIGRATE_URL }}
+        run: npx prisma migrate status || true
+
+      - name: Apply migrations
+        env:
+          DATABASE_URL: ${{ env.MIGRATE_URL }}
+          DIRECT_URL: ${{ env.MIGRATE_URL }}
+        run: npx prisma migrate deploy
+
+      - name: Verify the database schema is up to date
+        env:
+          DATABASE_URL: ${{ env.MIGRATE_URL }}
+          DIRECT_URL: ${{ env.MIGRATE_URL }}
+        run: npx prisma migrate status
+
+      - name: Start the Vercel deployment
+        run: curl -fsS -X POST "$DEPLOY_HOOK" -o /dev/null && echo "Vercel build started."
+
+      - name: Wait until the new version is live and healthy
+        run: |
+          want=$(printf '%s' "$GITHUB_SHA" | cut -c1-12)
+          hdr=(); [ -z "$BYPASS" ] || hdr=(-H "x-vercel-protection-bypass: $BYPASS")
+          for i in $(seq 1 60); do
+            body=$(curl -fsS --max-time 10 "${hdr[@]}" "$APP_URL/api/health" 2>/dev/null || true)
+            got=$(echo "$body" | jq -r '.commit // empty' 2>/dev/null || true)
+            ok=$(echo "$body" | jq -r '.ok // empty' 2>/dev/null || true)
+            if [ "$ok" = "true" ] && [ "$got" = "$want" ]; then echo "Live and healthy: $want"; exit 0; fi
+            echo "Waiting for $want (serving: ${got:-unknown})..."; sleep 20
+          done
+          echo "::error::$APP_URL did not serve commit $want with a healthy database within 20 minutes."; exit 1
+
+      - name: Smoke test - main pages load
+        run: |
+          hdr=(); [ -z "$BYPASS" ] || hdr=(-H "x-vercel-protection-bypass: $BYPASS")
+          for path in / /login; do
+            code=$(curl -sSL --max-time 15 -o /dev/null -w '%{http_code}' "${hdr[@]}" "$APP_URL$path")
+            echo "$path -> $code"
+            [ "$code" = "200" ] || { echo "::error::$path returned $code"; exit 1; }
+          done
