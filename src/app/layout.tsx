@@ -1,7 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import { Toaster } from "@/components/ui";
-import { PwaRegister } from "@/components/pwa";
+import { PwaRegister, UpdateNotice } from "@/components/pwa";
 import { StepUpPrompt } from "@/components/step-up";
 
 export const metadata: Metadata = {
@@ -23,6 +23,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <Toaster />
         <StepUpPrompt />
         <PwaRegister />
+        <UpdateNotice />
       </body>
     </html>
   );

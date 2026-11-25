@@ -5,7 +5,11 @@
  *  - pages: network first, falling back to the last copy, then to /offline.html;
  *  - /api and anything else: always the network. Business data is never cached.
  */
-const VERSION = "saf-flow-v2";
+// One cache per deployed build (the page registers /sw.js?v=<build>). The
+// previous build's cache is kept too, so a tab still running the old code can
+// load its chunks until it refreshes; anything older is deleted.
+const PREFIX = "saf-flow-v3-";
+const VERSION = PREFIX + (new URL(self.location.href).searchParams.get("v") || "0");
 const OFFLINE = "/offline.html";
 
 self.addEventListener("install", (e) => {
@@ -14,7 +18,12 @@ self.addEventListener("install", (e) => {
 
 self.addEventListener("activate", (e) => {
   e.waitUntil(
-    caches.keys().then((keys) => Promise.all(keys.filter((k) => k !== VERSION).map((k) => caches.delete(k)))).then(() => self.clients.claim()),
+    caches.keys().then((keys) => {
+      // caches.keys() lists caches in creation order: keep this build and the one before it.
+      const builds = keys.filter((k) => k.startsWith(PREFIX) && k !== VERSION);
+      const keep = new Set([VERSION, builds[builds.length - 1]]);
+      return Promise.all(keys.filter((k) => !keep.has(k)).map((k) => caches.delete(k)));
+    }).then(() => self.clients.claim()),
   );
 });
 

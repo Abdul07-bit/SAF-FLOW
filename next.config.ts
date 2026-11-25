@@ -41,8 +41,12 @@ const securityHeaders = [
   ...(httpsApp ? [{ key: "Strict-Transport-Security", value: "max-age=31536000; includeSubDomains" }] : []),
 ];
 
+/** Which build this is: the browser compares it with /api/health to spot a newer deploy. */
+const BUILD_ID = (process.env.VERCEL_GIT_COMMIT_SHA || process.env.SAF_COMMIT_SHA || "dev").slice(0, 12);
+
 const nextConfig: NextConfig = {
   output: "standalone",
+  env: { NEXT_PUBLIC_BUILD_ID: BUILD_ID },
   // Pin the trace root to this project (a stray lockfile higher up would otherwise move it).
   outputFileTracingRoot: path.resolve(__dirname),
   poweredByHeader: false,
