@@ -17,6 +17,7 @@ import { Button, Card, DataTable, Empty, Field, Input, Loadable, Modal, Notice, 
 import { SALE_TENDERS, tenderLabel } from "./dine-service";
 import { newSplit, SplitPaymentEditor, splitParts, splitReady, type SplitRow } from "@/components/split-payment";
 import { describePayment } from "@/shared/tender";
+import { formatDailyNo } from "@/lib/business-day";
 import { MobileBillBar } from "@/components/mobile-bill-bar";
 
 // ---------------------------------------------------------------------------
@@ -233,7 +234,7 @@ export function BillPos() {
             <Check className="mx-auto h-10 w-10 rounded-full bg-emerald-100 p-2 text-emerald-700" aria-hidden />
             <div>
               <p className="text-lg font-semibold text-slate-900">{formatINR(done.total)} - {describePayment(done)}</p>
-              <p className="text-sm text-slate-600">Invoice {done.invoiceNo}</p>
+              <p className="text-sm text-slate-600">Bill #{formatDailyNo(done.dailyNo)} - Invoice {done.invoiceNo}</p>
               {done.changeDue > 0 && <p className="mt-1 text-base font-semibold text-emerald-800">Return change {formatINR(done.changeDue)}</p>}
             </div>
             <a href={done.invoiceUrl} target="_blank" rel="noreferrer"><Button className="w-full"><ExternalLink className="h-4 w-4" /> Open / print invoice</Button></a>
@@ -267,6 +268,7 @@ export function BillCashier() {
             <Card pad={false} title="My bills today">
               <DataTable rows={d.recent} rowKey={(r: any) => r.id} empty={<Empty title="No bills yet today" />}
                 columns={[
+                  { key: "n", label: "Bill", render: (r: any) => <span className="font-medium">#{formatDailyNo(r.dailyNo)}</span> },
                   { key: "i", label: "Invoice", render: (r: any) => <span className="font-mono text-[13px]">{r.invoiceNo}</span> },
                   { key: "t", label: "Time", render: (r: any) => fmtTime(r.createdAt) },
                   { key: "c", label: "Customer", render: (r: any) => r.customer?.name ?? "-" },
@@ -285,7 +287,7 @@ export function BillCashier() {
 
 export function BillSales() {
   const p = useProduct();
-  const range = useRange("today");
+  const range = useRange("today", p.settings);
   const [q, setQ] = useState("");
   const [status, setStatus] = useState("");
   const list = useApi<{ items: any[]; total: number }>(`/bill/sales?${range.query}${q ? `&q=${encodeURIComponent(q)}` : ""}${status ? `&status=${status}` : ""}`);
@@ -304,6 +306,7 @@ export function BillSales() {
           <Card pad={false} title={`${d.items.length} invoices`} subtitle={`Completed sales total ${formatINR(d.total)}`}>
             <DataTable rows={d.items} rowKey={(r) => r.id} empty={<Empty title="No invoices in this period" />}
               columns={[
+                { key: "n", label: "Bill", render: (r) => <span className="font-medium" title={`Business day ${fmtDate(r.businessDate)}`}>#{formatDailyNo(r.dailyNo)}</span> },
                 { key: "i", label: "Invoice", render: (r) => <span className="font-mono text-[13px]">{r.invoiceNo}</span> },
                 { key: "t", label: "When", render: (r) => fmtDateTime(r.createdAt) },
                 { key: "c", label: "Customer", render: (r) => (r.customer ? <>{r.customer.name}<span className="block text-xs text-slate-500">{r.customer.phone}</span></> : "-") },

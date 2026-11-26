@@ -852,6 +852,274 @@
         }
       }
     },
+    "/api/{product}/daily-reports": {
+      "get": {
+        "summary": "Daily WhatsApp report: settings summary and the last 60 reports",
+        "description": "**Authorization:** Tenant user of the product in the URL with a usable subscription; plan feature: daily_report_whatsapp; role permission: dashboard.view.",
+        "tags": [
+          "day-book"
+        ],
+        "parameters": [
+          {
+            "name": "product",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "402": {
+            "description": "Subscription expired"
+          },
+          "403": {
+            "description": "Not permitted (plan feature, role permission, tenant suspended...)"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        },
+        "x-saf-auth": {
+          "product": ":product",
+          "feature": "daily_report_whatsapp",
+          "permission": "dashboard.view"
+        }
+      }
+    },
+    "/api/{product}/daily-reports/send": {
+      "post": {
+        "summary": "Send a day's closing report to the owner's WhatsApp now (sends again if it already went)",
+        "description": "**Authorization:** Tenant user of the product in the URL with a usable subscription; plan feature: daily_report_whatsapp; role permission: dashboard.view.\n\nMutations require header `x-saf-request: 1` (CSRF guard).",
+        "tags": [
+          "day-book"
+        ],
+        "parameters": [
+          {
+            "name": "product",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "402": {
+            "description": "Subscription expired"
+          },
+          "403": {
+            "description": "Not permitted (plan feature, role permission, tenant suspended...)"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        },
+        "x-saf-auth": {
+          "product": ":product",
+          "feature": "daily_report_whatsapp",
+          "permission": "dashboard.view"
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "date": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/{product}/day-book": {
+      "get": {
+        "summary": "Day book: sales, order count and expenses per business day for a date range",
+        "description": "**Authorization:** Tenant user of the product in the URL with a usable subscription; plan feature: day_book; role permission: dashboard.view.",
+        "tags": [
+          "day-book"
+        ],
+        "parameters": [
+          {
+            "name": "product",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "all",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "0",
+                "1"
+              ]
+            }
+          },
+          {
+            "name": "branch",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "402": {
+            "description": "Subscription expired"
+          },
+          "403": {
+            "description": "Not permitted (plan feature, role permission, tenant suspended...)"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        },
+        "x-saf-auth": {
+          "product": ":product",
+          "feature": "day_book",
+          "permission": "dashboard.view"
+        }
+      }
+    },
+    "/api/{product}/day-book/pdf": {
+      "get": {
+        "summary": "Day book as a PDF (one day: the daily closing report)",
+        "description": "**Authorization:** Tenant user of the product in the URL with a usable subscription; plan feature: day_book; role permission: dashboard.view.",
+        "tags": [
+          "day-book"
+        ],
+        "parameters": [
+          {
+            "name": "product",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "all",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "0",
+                "1"
+              ]
+            }
+          },
+          {
+            "name": "branch",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "402": {
+            "description": "Subscription expired"
+          },
+          "403": {
+            "description": "Not permitted (plan feature, role permission, tenant suspended...)"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        },
+        "x-saf-auth": {
+          "product": ":product",
+          "feature": "day_book",
+          "permission": "dashboard.view"
+        }
+      }
+    },
     "/api/{product}/security/overview": {
       "get": {
         "summary": "Your business: staff access, MFA, sessions and sign-in activity",
@@ -10561,6 +10829,399 @@
         }
       }
     },
+    "/api/bill/expenses": {
+      "get": {
+        "summary": "List expenses",
+        "description": "**Authorization:** Tenant user of bill with a usable subscription; plan feature: expenses; role permission: expenses.manage.",
+        "tags": [
+          "bill.expenses"
+        ],
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 100
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            }
+          },
+          {
+            "name": "pageSize",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "default": 200,
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 500
+            }
+          },
+          {
+            "name": "all",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "0",
+                "1"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "402": {
+            "description": "Subscription expired"
+          },
+          "403": {
+            "description": "Not permitted (plan feature, role permission, tenant suspended...)"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        },
+        "x-saf-auth": {
+          "product": "bill",
+          "feature": "expenses",
+          "permission": "expenses.manage"
+        }
+      },
+      "post": {
+        "summary": "Create expense",
+        "description": "**Authorization:** Tenant user of bill with a usable subscription; plan feature: expenses; role permission: expenses.manage.\n\nMutations require header `x-saf-request: 1` (CSRF guard).",
+        "tags": [
+          "bill.expenses"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "402": {
+            "description": "Subscription expired"
+          },
+          "403": {
+            "description": "Not permitted (plan feature, role permission, tenant suspended...)"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        },
+        "x-saf-auth": {
+          "product": "bill",
+          "feature": "expenses",
+          "permission": "expenses.manage"
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "expenseDate": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "category": {
+                    "type": "string",
+                    "enum": [
+                      "RAW_MATERIALS",
+                      "GAS_FUEL",
+                      "UTILITIES",
+                      "SALARY",
+                      "RENT",
+                      "MAINTENANCE",
+                      "SUPPLIES",
+                      "TRANSPORT",
+                      "MARKETING",
+                      "TEA_SNACKS",
+                      "OTHER"
+                    ]
+                  },
+                  "description": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  },
+                  "amount": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 10000000000
+                  },
+                  "method": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "enum": [
+                          "CASH",
+                          "UPI",
+                          "CARD",
+                          "WALLET",
+                          "CREDIT",
+                          "OTHER"
+                        ]
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "paidTo": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 100
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "category",
+                  "description",
+                  "amount"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/bill/expenses/{id}": {
+      "delete": {
+        "summary": "Delete expense",
+        "description": "**Authorization:** Tenant user of bill with a usable subscription; plan feature: expenses; role permission: expenses.manage.\n\nMutations require header `x-saf-request: 1` (CSRF guard).",
+        "tags": [
+          "bill.expenses"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "402": {
+            "description": "Subscription expired"
+          },
+          "403": {
+            "description": "Not permitted (plan feature, role permission, tenant suspended...)"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        },
+        "x-saf-auth": {
+          "product": "bill",
+          "feature": "expenses",
+          "permission": "expenses.manage"
+        }
+      },
+      "get": {
+        "summary": "Get one expense",
+        "description": "**Authorization:** Tenant user of bill with a usable subscription; plan feature: expenses; role permission: expenses.manage.",
+        "tags": [
+          "bill.expenses"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "402": {
+            "description": "Subscription expired"
+          },
+          "403": {
+            "description": "Not permitted (plan feature, role permission, tenant suspended...)"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        },
+        "x-saf-auth": {
+          "product": "bill",
+          "feature": "expenses",
+          "permission": "expenses.manage"
+        }
+      },
+      "patch": {
+        "summary": "Update expense",
+        "description": "**Authorization:** Tenant user of bill with a usable subscription; plan feature: expenses; role permission: expenses.manage.\n\nMutations require header `x-saf-request: 1` (CSRF guard).",
+        "tags": [
+          "bill.expenses"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "402": {
+            "description": "Subscription expired"
+          },
+          "403": {
+            "description": "Not permitted (plan feature, role permission, tenant suspended...)"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        },
+        "x-saf-auth": {
+          "product": "bill",
+          "feature": "expenses",
+          "permission": "expenses.manage"
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "expenseDate": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "category": {
+                    "type": "string",
+                    "enum": [
+                      "RAW_MATERIALS",
+                      "GAS_FUEL",
+                      "UTILITIES",
+                      "SALARY",
+                      "RENT",
+                      "MAINTENANCE",
+                      "SUPPLIES",
+                      "TRANSPORT",
+                      "MARKETING",
+                      "TEA_SNACKS",
+                      "OTHER"
+                    ]
+                  },
+                  "description": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  },
+                  "amount": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 10000000000
+                  },
+                  "method": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "enum": [
+                          "CASH",
+                          "UPI",
+                          "CARD",
+                          "WALLET",
+                          "CREDIT",
+                          "OTHER"
+                        ]
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "paidTo": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 100
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/bill/payments/upi": {
       "get": {
         "summary": "The business's UPI QR for a bill amount (shown to the customer on the cashier screen)",
@@ -13046,6 +13707,399 @@
           "product": "dine",
           "feature": "dashboard",
           "permission": "dashboard.view"
+        }
+      }
+    },
+    "/api/dine/expenses": {
+      "get": {
+        "summary": "List expenses",
+        "description": "**Authorization:** Tenant user of dine with a usable subscription; plan feature: expenses; role permission: expenses.manage.",
+        "tags": [
+          "dine.expenses"
+        ],
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 100
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            }
+          },
+          {
+            "name": "pageSize",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "default": 200,
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 500
+            }
+          },
+          {
+            "name": "all",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "0",
+                "1"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "402": {
+            "description": "Subscription expired"
+          },
+          "403": {
+            "description": "Not permitted (plan feature, role permission, tenant suspended...)"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        },
+        "x-saf-auth": {
+          "product": "dine",
+          "feature": "expenses",
+          "permission": "expenses.manage"
+        }
+      },
+      "post": {
+        "summary": "Create expense",
+        "description": "**Authorization:** Tenant user of dine with a usable subscription; plan feature: expenses; role permission: expenses.manage.\n\nMutations require header `x-saf-request: 1` (CSRF guard).",
+        "tags": [
+          "dine.expenses"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "402": {
+            "description": "Subscription expired"
+          },
+          "403": {
+            "description": "Not permitted (plan feature, role permission, tenant suspended...)"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        },
+        "x-saf-auth": {
+          "product": "dine",
+          "feature": "expenses",
+          "permission": "expenses.manage"
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "expenseDate": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "category": {
+                    "type": "string",
+                    "enum": [
+                      "RAW_MATERIALS",
+                      "GAS_FUEL",
+                      "UTILITIES",
+                      "SALARY",
+                      "RENT",
+                      "MAINTENANCE",
+                      "SUPPLIES",
+                      "TRANSPORT",
+                      "MARKETING",
+                      "TEA_SNACKS",
+                      "OTHER"
+                    ]
+                  },
+                  "description": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  },
+                  "amount": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 10000000000
+                  },
+                  "method": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "enum": [
+                          "CASH",
+                          "UPI",
+                          "CARD",
+                          "WALLET",
+                          "CREDIT",
+                          "OTHER"
+                        ]
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "paidTo": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 100
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "category",
+                  "description",
+                  "amount"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/dine/expenses/{id}": {
+      "delete": {
+        "summary": "Delete expense",
+        "description": "**Authorization:** Tenant user of dine with a usable subscription; plan feature: expenses; role permission: expenses.manage.\n\nMutations require header `x-saf-request: 1` (CSRF guard).",
+        "tags": [
+          "dine.expenses"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "402": {
+            "description": "Subscription expired"
+          },
+          "403": {
+            "description": "Not permitted (plan feature, role permission, tenant suspended...)"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        },
+        "x-saf-auth": {
+          "product": "dine",
+          "feature": "expenses",
+          "permission": "expenses.manage"
+        }
+      },
+      "get": {
+        "summary": "Get one expense",
+        "description": "**Authorization:** Tenant user of dine with a usable subscription; plan feature: expenses; role permission: expenses.manage.",
+        "tags": [
+          "dine.expenses"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "402": {
+            "description": "Subscription expired"
+          },
+          "403": {
+            "description": "Not permitted (plan feature, role permission, tenant suspended...)"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        },
+        "x-saf-auth": {
+          "product": "dine",
+          "feature": "expenses",
+          "permission": "expenses.manage"
+        }
+      },
+      "patch": {
+        "summary": "Update expense",
+        "description": "**Authorization:** Tenant user of dine with a usable subscription; plan feature: expenses; role permission: expenses.manage.\n\nMutations require header `x-saf-request: 1` (CSRF guard).",
+        "tags": [
+          "dine.expenses"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "402": {
+            "description": "Subscription expired"
+          },
+          "403": {
+            "description": "Not permitted (plan feature, role permission, tenant suspended...)"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        },
+        "x-saf-auth": {
+          "product": "dine",
+          "feature": "expenses",
+          "permission": "expenses.manage"
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "expenseDate": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "category": {
+                    "type": "string",
+                    "enum": [
+                      "RAW_MATERIALS",
+                      "GAS_FUEL",
+                      "UTILITIES",
+                      "SALARY",
+                      "RENT",
+                      "MAINTENANCE",
+                      "SUPPLIES",
+                      "TRANSPORT",
+                      "MARKETING",
+                      "TEA_SNACKS",
+                      "OTHER"
+                    ]
+                  },
+                  "description": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  },
+                  "amount": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 10000000000
+                  },
+                  "method": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "enum": [
+                          "CASH",
+                          "UPI",
+                          "CARD",
+                          "WALLET",
+                          "CREDIT",
+                          "OTHER"
+                        ]
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "paidTo": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 100
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          }
         }
       }
     },
@@ -17317,6 +18371,72 @@
         }
       }
     },
+    "/api/jobs/daily-reports": {
+      "get": {
+        "summary": "Same job for Vercel Cron (GET with Authorization: Bearer <CRON_SECRET>).",
+        "description": "**Authorization:** Public (no session).",
+        "tags": [
+          "system"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "402": {
+            "description": "Subscription expired"
+          },
+          "403": {
+            "description": "Not permitted (plan feature, role permission, tenant suspended...)"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        },
+        "security": [],
+        "x-saf-auth": {
+          "public": true
+        }
+      },
+      "post": {
+        "summary": "Scheduled daily closing reports to owners' WhatsApp (Growth). Requires the cron secret.",
+        "description": "**Authorization:** Public (no session).",
+        "tags": [
+          "system"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "402": {
+            "description": "Subscription expired"
+          },
+          "403": {
+            "description": "Not permitted (plan feature, role permission, tenant suspended...)"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        },
+        "security": [],
+        "x-saf-auth": {
+          "public": true
+        }
+      }
+    },
     "/api/jobs/renewals": {
       "get": {
         "summary": "Same job for Vercel Cron (GET with Authorization: Bearer <CRON_SECRET>).",
@@ -18305,7 +19425,10 @@
                 "type": "object",
                 "properties": {
                   "expenseDate": {
-                    "type": "string"
+                    "type": [
+                      "string",
+                      "null"
+                    ]
                   },
                   "category": {
                     "type": "string",
@@ -18362,7 +19485,6 @@
                   }
                 },
                 "required": [
-                  "expenseDate",
                   "category",
                   "description",
                   "amount"
@@ -18508,7 +19630,10 @@
                 "type": "object",
                 "properties": {
                   "expenseDate": {
-                    "type": "string"
+                    "type": [
+                      "string",
+                      "null"
+                    ]
                   },
                   "category": {
                     "type": "string",

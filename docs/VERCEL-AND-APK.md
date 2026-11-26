@@ -76,6 +76,8 @@ The SAF Admin → Security Center → Configuration checks shows **"Shared rate 
 
 The daily renewal job is already set up in `vercel.json` (runs 02:00 IST). Vercel sends `CRON_SECRET` with it automatically.
 
+**Daily closing report on WhatsApp (Growth plan).** Shops close at different times, so this job must run every 15 minutes, which Vercel Hobby cannot do. `.github/workflows/daily-reports.yml` runs it from GitHub instead: add the repository secret `PRODUCTION_CRON_SECRET` (the same value as `CRON_SECRET` in Vercel; `PRODUCTION_URL` is already there for deploys). For WhatsApp delivery also add `WHATSAPP_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID` and, if you named it differently, `WHATSAPP_REPORT_TEMPLATE` to Vercel (see `.env.example` for the template it needs). Without them reports are still kept in the app and the owner gets an in-app notification.
+
 ## Step 5 — Make the Android APK (free, about 10 minutes)
 
 1. Open **https://www.pwabuilder.com** → paste `https://<your-address>/download` → **Start**.

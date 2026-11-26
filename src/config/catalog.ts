@@ -100,6 +100,11 @@ function perms(product: ProductCode, list: [string, string][]): PermissionDef[] 
 
 /** Staff features shared by every product (each product gates them independently). */
 const STAFF_BASIC: F[] = [["staff_logins", "Staff login management", "Team"]];
+
+/** Day book (daily sales, expenses and order counts by business day) - every product, Basic. */
+const DAYBOOK_BASIC: F[] = [["day_book", "Day book: daily sales, expenses and orders", "Reports"]];
+/** Automatic end-of-day PDF report to the owner's WhatsApp - every product, Growth. */
+const DAYBOOK_GROWTH: F[] = [["daily_report_whatsapp", "Daily closing report on WhatsApp (PDF)", "Reports"]];
 const STAFF_GROWTH: F[] = [
   ["staff_management", "Staff management & employee database", "Team"],
   ["attendance", "Employee attendance", "Team"],
@@ -152,10 +157,13 @@ const dine: ProductDef = {
       ["low_stock_alerts", "Low-stock alerts", "Inventory"],
       ["whatsapp_invoice", "WhatsApp invoice sharing", "Sales"],
       ["reports_basic", "Basic sales reports", "Reports"],
+      ["expenses", "Daily expense management", "Accounts"],
+      ...DAYBOOK_BASIC,
       ...STAFF_BASIC,
     ],
     [
       ...STAFF_GROWTH,
+      ...DAYBOOK_GROWTH,
       ["inventory_advanced", "Advanced stock management", "Inventory"],
       ["ingredients", "Ingredient management", "Inventory"],
       ["auto_deduction", "Automatic ingredient deduction", "Inventory"],
@@ -184,6 +192,7 @@ const dine: ProductDef = {
     ["purchases.manage", "Manage suppliers and purchases"],
     ["reports.view", "View sales reports"],
     ["analytics.view", "View advanced analytics"],
+    ["expenses.manage", "Record shop expenses"],
   ]),
   roles: [
     { code: "manager", name: "Manager", description: "Full access to Dine Flow", home: "", permissions: "*" },
@@ -242,10 +251,12 @@ const stay: ProductDef = {
       ["expenses", "Basic expense management", "Billing"],
       ["occupancy_reports", "Occupancy reports", "Reports"],
       ["housekeeping_status", "Housekeeping status management", "Housekeeping"],
+      ...DAYBOOK_BASIC,
       ...STAFF_BASIC,
     ],
     [
       ...STAFF_GROWTH,
+      ...DAYBOOK_GROWTH,
       ["housekeeping_tasks", "Housekeeping task assignments", "Housekeeping"],
       ["maintenance", "Room maintenance management", "Housekeeping"],
       ["analytics_advanced", "Advanced occupancy analytics", "Reports"],
@@ -345,10 +356,13 @@ const bill: ProductDef = {
       ["purchase_records", "Purchase records", "Purchasing"],
       ["cashier", "Cashier dashboard", "Sales"],
       ["reports_basic", "Basic sales reports", "Reports"],
+      ["expenses", "Daily expense management", "Accounts"],
+      ...DAYBOOK_BASIC,
       ...STAFF_BASIC,
     ],
     [
       ...STAFF_GROWTH,
+      ...DAYBOOK_GROWTH,
       ["inventory_advanced", "Advanced inventory", "Inventory"],
       ["suppliers", "Supplier management", "Purchasing"],
       ["purchase_management", "Purchase management", "Purchasing"],
@@ -375,6 +389,7 @@ const bill: ProductDef = {
     ["counters.manage", "Manage POS counters"],
     ["reports.view", "View sales reports"],
     ["analytics.view", "View advanced analytics"],
+    ["expenses.manage", "Record shop expenses"],
   ]),
   roles: [
     { code: "manager", name: "Store Manager", description: "Full access to Bill Flow", home: "", permissions: "*" },

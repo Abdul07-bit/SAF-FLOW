@@ -5,6 +5,7 @@ import { withPlatform } from "../db";
 import { isPrivateKey, storage } from "../core/storage";
 import { verifyFileUrl } from "../core/keys";
 import { runRenewalJob } from "../core/subscriptions";
+import { runDailyReportJob } from "../core/daily-report";
 import { writeAudit } from "../core/audit";
 import { buildOpenApi } from "../openapi";
 
@@ -46,12 +47,16 @@ route({
  * service) or `Authorization: Bearer <CRON_SECRET>` (Vercel Cron, which calls
  * with GET). Compared in constant time.
  */
-async function renewalJob(ctx: { req: Request }) {
+function assertCronSecret(req: Request) {
   const secret = process.env.CRON_SECRET || "";
-  const bearer = (ctx.req.headers.get("authorization") || "").replace(/^Bearer\s+/i, "");
-  const given = ctx.req.headers.get("x-cron-secret") || bearer;
+  const bearer = (req.headers.get("authorization") || "").replace(/^Bearer\s+/i, "");
+  const given = req.headers.get("x-cron-secret") || bearer;
   const ok = secret.length >= 12 && given.length === secret.length && timingSafeEqual(Buffer.from(given), Buffer.from(secret));
   if (!ok) throw new HttpError(401, "UNAUTHENTICATED", "Invalid cron secret.");
+}
+
+async function renewalJob(ctx: { req: Request }) {
+  assertCronSecret(ctx.req);
   return withPlatform(async (db) => {
     const result = await runRenewalJob(db);
     await writeAudit(db, { action: "jobs.renewals", meta: result });
@@ -71,6 +76,33 @@ route({
   summary: "Same job for Vercel Cron (GET with Authorization: Bearer <CRON_SECRET>).",
   auth: { public: true }, rateLimit: { limit: 5, windowMs: 60_000 }, audit: false,
   handler: renewalJob,
+});
+
+/**
+ * Daily closing reports (Growth): every shop whose closing time has passed
+ * gets that business day's PDF on WhatsApp, once. Call it every 15 minutes
+ * (docker `cron` service, or the GitHub Actions schedule in
+ * .github/workflows/daily-reports.yml when hosted on Vercel Hobby).
+ */
+async function dailyReportJob(ctx: { req: Request }) {
+  assertCronSecret(ctx.req);
+  const result = await runDailyReportJob();
+  if (result.due) await withPlatform((db) => writeAudit(db, { action: "jobs.daily_reports", meta: result }));
+  return result;
+}
+
+route({
+  method: "POST", path: "/jobs/daily-reports", tag: "system",
+  summary: "Scheduled daily closing reports to owners' WhatsApp (Growth). Requires the cron secret.",
+  auth: { public: true }, rateLimit: { limit: 10, windowMs: 60_000 }, audit: false,
+  handler: dailyReportJob,
+});
+
+route({
+  method: "GET", path: "/jobs/daily-reports", tag: "system",
+  summary: "Same job for Vercel Cron (GET with Authorization: Bearer <CRON_SECRET>).",
+  auth: { public: true }, rateLimit: { limit: 10, windowMs: 60_000 }, audit: false,
+  handler: dailyReportJob,
 });
 
 /**

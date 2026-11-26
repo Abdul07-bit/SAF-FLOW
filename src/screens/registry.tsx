@@ -16,6 +16,7 @@ import { BranchesScreen, SettingsScreen, SubscriptionScreen, SupportScreen } fro
 import { AttendanceScreen, AttendanceStationScreen, EmployeesScreen, IdCardsScreen, MyAttendanceScreen, ShiftsScreen, TeamScreen, VerifyScreen } from "./shared-team";
 import { StayAvailability, StayCashier, StayDashboard, StayFrontDesk, StayInvoices, StayReservations } from "./stay-front";
 import { SecurityScreen } from "./security-center";
+import { DayBookScreen, ExpensesScreen } from "./shared-daybook";
 import { StayAnalytics, StayExpenses, StayGuests, StayHousekeeping, StayMaintenance, StayOperations, StayReports, StayRevenue, StayRooms } from "./stay-ops";
 
 export const SCREENS: Record<string, ScreenComponent> = {
@@ -33,6 +34,9 @@ export const SCREENS: Record<string, ScreenComponent> = {
   "*/subscription": SubscriptionScreen,
   "*/support": SupportScreen,
   "*/security": SecurityScreen,
+  "*/day-book": DayBookScreen,
+  "dine/expenses": ExpensesScreen,
+  "bill/expenses": ExpensesScreen,
 
   // SAF Dine Flow
   "dine/": DineDashboard,

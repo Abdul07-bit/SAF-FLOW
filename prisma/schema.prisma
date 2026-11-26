@@ -295,6 +295,7 @@ model Tenant {
   dinePurchases       DinePurchase[]
   dinePurchaseItems   DinePurchaseItem[]
   dineWastage         DineWastage[]
+  dineExpenses        DineExpense[]
   // Stay
   stayRoomTypes       StayRoomType[]
   stayRooms           StayRoom[]
@@ -317,6 +318,8 @@ model Tenant {
   billSuppliers       BillSupplier[]
   billPurchases       BillPurchase[]
   billPurchaseItems   BillPurchaseItem[]
+  billExpenses        BillExpense[]
+  dailyReports        DailyReport[]
   // SAF Flow foundation
   staffAssignments    StaffAssignment[]
   staffAssignBranches StaffAssignmentBranch[]
@@ -1010,7 +1013,12 @@ model DineOrder {
   id              String          @id @default(uuid()) @db.Uuid
   tenantId        String          @map("tenant_id") @db.Uuid
   branchId        String          @map("branch_id") @db.Uuid
+  /// Running order number since the business started (all days).
   orderNo         Int             @map("order_no")
+  /// Business day the order belongs to (see src/lib/business-day.ts).
+  businessDate    DateTime        @map("business_date") @db.Date
+  /// Order number within the business day and branch: 1, 2, 3... restarts every day.
+  dailyNo         Int             @map("daily_no")
   tableId         String?         @map("table_id") @db.Uuid
   type            DineOrderType   @default(DINE_IN)
   source          DineOrderSource @default(POS)
@@ -1044,8 +1052,10 @@ model DineOrder {
   tickets DineKitchenOrder[]
 
   @@unique([tenantId, orderNo])
+  @@unique([tenantId, branchId, businessDate, dailyNo])
   @@index([tenantId, status])
   @@index([tenantId, createdAt])
+  @@index([tenantId, businessDate])
   @@map("dine_orders")
 }
 
@@ -1394,6 +1404,74 @@ model StayExpense {
   @@map("stay_expenses")
 }
 
+// Day-to-day restaurant expenses (gas, vegetables bought in cash, salaries...).
+model DineExpense {
+  id          String     @id @default(uuid()) @db.Uuid
+  tenantId    String     @map("tenant_id") @db.Uuid
+  branchId    String?    @map("branch_id") @db.Uuid
+  category    String
+  description String
+  amount      Int
+  /// Business day the expense belongs to.
+  expenseDate DateTime   @map("expense_date") @db.Date
+  paidTo      String?    @map("paid_to")
+  method      TenderType @default(CASH)
+  createdById String?    @map("created_by_id") @db.Uuid
+  createdAt   DateTime   @default(now()) @map("created_at")
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, expenseDate])
+  @@map("dine_expenses")
+}
+
+// Day-to-day shop expenses.
+model BillExpense {
+  id          String     @id @default(uuid()) @db.Uuid
+  tenantId    String     @map("tenant_id") @db.Uuid
+  branchId    String?    @map("branch_id") @db.Uuid
+  category    String
+  description String
+  amount      Int
+  /// Business day the expense belongs to.
+  expenseDate DateTime   @map("expense_date") @db.Date
+  paidTo      String?    @map("paid_to")
+  method      TenderType @default(CASH)
+  createdById String?    @map("created_by_id") @db.Uuid
+  createdAt   DateTime   @default(now()) @map("created_at")
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, expenseDate])
+  @@map("bill_expenses")
+}
+
+// End-of-day report sent to the owner's WhatsApp (Growth plan). One row per
+// business day and product; makes the scheduled job safe to run repeatedly.
+model DailyReport {
+  id           String    @id @default(uuid()) @db.Uuid
+  tenantId     String    @map("tenant_id") @db.Uuid
+  productCode  String    @map("product_code")
+  businessDate DateTime  @map("business_date") @db.Date
+  /// SENT, FAILED or SKIPPED (no WhatsApp number, or WhatsApp not configured)
+  status       String
+  /// WhatsApp number it went to (digits only).
+  sentTo       String?   @map("sent_to")
+  attempts     Int       @default(0)
+  error        String?
+  /// Totals at the time of sending (sales, expenses, orders...).
+  summary      Json      @default("{}")
+  sentAt       DateTime? @map("sent_at")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, productCode, businessDate])
+  @@index([tenantId, createdAt])
+  @@map("daily_reports")
+}
+
 model StayHousekeepingTask {
   id           String     @id @default(uuid()) @db.Uuid
   tenantId     String     @map("tenant_id") @db.Uuid
@@ -1562,7 +1640,12 @@ model BillSale {
   tenantId      String     @map("tenant_id") @db.Uuid
   branchId      String     @map("branch_id") @db.Uuid
   counterId     String?    @map("counter_id") @db.Uuid
+  /// Running bill number since the business started (all days).
   saleNo        Int        @map("sale_no")
+  /// Business day the bill belongs to (see src/lib/business-day.ts).
+  businessDate  DateTime   @map("business_date") @db.Date
+  /// Bill number within the business day and branch: 1, 2, 3... restarts every day.
+  dailyNo       Int        @map("daily_no")
   invoiceNo     String     @map("invoice_no")
   customerId    String?    @map("customer_id") @db.Uuid
   cashierId     String?    @map("cashier_id") @db.Uuid
@@ -1588,7 +1671,9 @@ model BillSale {
   items    BillSaleItem[]
 
   @@unique([tenantId, saleNo])
+  @@unique([tenantId, branchId, businessDate, dailyNo])
   @@index([tenantId, createdAt])
+  @@index([tenantId, businessDate])
   @@map("bill_sales")
 }
 

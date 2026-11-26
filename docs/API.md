@@ -23,7 +23,7 @@ Each endpoint declares exactly one policy, enforced by the router before the han
 - **Tenant user of a product** - checks, in order: business active, product subscribed, subscription usable,
   the user has a role in that product, the plan (or a per-business override) includes the feature, the role grants the permission.
 
-328 endpoints.
+344 endpoints.
 
 ## Authentication & session
 
@@ -185,6 +185,15 @@ Each endpoint declares exactly one policy, enforced by the router before the han
 | GET | `/api/:product/support/tickets/:id` | Ticket thread | Tenant user of the product in the URL with a usable subscription (expired/suspended allowed); role permission: support.use. |
 | POST | `/api/:product/support/tickets/:id/messages` | Reply on a ticket | Tenant user of the product in the URL with a usable subscription (expired/suspended allowed); role permission: support.use. |
 
+## Day book, expenses & daily report
+
+| Method | Path | Summary | Authorization |
+|---|---|---|---|
+| GET | `/api/:product/daily-reports` | Daily WhatsApp report: settings summary and the last 60 reports | Tenant user of the product in the URL with a usable subscription; plan feature: daily_report_whatsapp; role permission: dashboard.view. |
+| POST | `/api/:product/daily-reports/send` | Send a day's closing report to the owner's WhatsApp now (sends again if it already went) | Tenant user of the product in the URL with a usable subscription; plan feature: daily_report_whatsapp; role permission: dashboard.view. |
+| GET | `/api/:product/day-book` | Day book: sales, order count and expenses per business day for a date range | Tenant user of the product in the URL with a usable subscription; plan feature: day_book; role permission: dashboard.view. |
+| GET | `/api/:product/day-book/pdf` | Day book as a PDF (one day: the daily closing report) | Tenant user of the product in the URL with a usable subscription; plan feature: day_book; role permission: dashboard.view. |
+
 ## SAF Dine Flow
 
 | Method | Path | Summary | Authorization |
@@ -304,6 +313,8 @@ Each endpoint declares exactly one policy, enforced by the router before the han
 | GET | `/api/docs/openapi.json` | OpenAPI 3.1 description of this API (not served in production unless PUBLIC_API_DOCS=1) | Public (no session). |
 | GET | `/api/files/*key` | Serve an uploaded image (logo / employee photo) | Public (no session). |
 | GET | `/api/health` | Liveness / readiness probe | Public (no session). |
+| GET | `/api/jobs/daily-reports` | Same job for Vercel Cron (GET with Authorization: Bearer <CRON_SECRET>). | Public (no session). |
+| POST | `/api/jobs/daily-reports` | Scheduled daily closing reports to owners' WhatsApp (Growth). Requires the cron secret. | Public (no session). |
 | GET | `/api/jobs/renewals` | Same job for Vercel Cron (GET with Authorization: Bearer <CRON_SECRET>). | Public (no session). |
 | POST | `/api/jobs/renewals` | Scheduled renewal job (expire lapsed subscriptions, raise renewal invoices, send reminders). Requires the cron secret. | Public (no session). |
 | GET | `/api/well-known/assetlinks` | Digital Asset Links for the Android app | Public (no session). |
@@ -339,6 +350,16 @@ Each endpoint declares exactly one policy, enforced by the router before the han
 | DELETE | `/api/bill/customers/:id` | Delete customer | Tenant user of bill with a usable subscription; plan feature: customers; role permission: customers.manage. |
 | GET | `/api/bill/customers/:id` | Get one customer | Tenant user of bill with a usable subscription; plan feature: customers or pos; role permission: customers.view or pos.use. |
 | PATCH | `/api/bill/customers/:id` | Update customer | Tenant user of bill with a usable subscription; plan feature: customers; role permission: customers.manage. |
+
+## bill.expenses
+
+| Method | Path | Summary | Authorization |
+|---|---|---|---|
+| GET | `/api/bill/expenses` | List expenses | Tenant user of bill with a usable subscription; plan feature: expenses; role permission: expenses.manage. |
+| POST | `/api/bill/expenses` | Create expense | Tenant user of bill with a usable subscription; plan feature: expenses; role permission: expenses.manage. |
+| DELETE | `/api/bill/expenses/:id` | Delete expense | Tenant user of bill with a usable subscription; plan feature: expenses; role permission: expenses.manage. |
+| GET | `/api/bill/expenses/:id` | Get one expense | Tenant user of bill with a usable subscription; plan feature: expenses; role permission: expenses.manage. |
+| PATCH | `/api/bill/expenses/:id` | Update expense | Tenant user of bill with a usable subscription; plan feature: expenses; role permission: expenses.manage. |
 
 ## bill.products
 
@@ -394,6 +415,16 @@ Each endpoint declares exactly one policy, enforced by the router before the han
 | GET | `/api/dine/menu-categories/:id` | Get one category | Tenant user of dine with a usable subscription; plan feature: menu or pos or waiter or products; role permission: menu.view or pos.use. |
 | PATCH | `/api/dine/menu-categories/:id` | Update category | Tenant user of dine with a usable subscription; plan feature: menu; role permission: menu.manage. |
 | POST | `/api/dine/menu-categories/:id/restore` | Reactivate category | Tenant user of dine with a usable subscription; plan feature: menu; role permission: menu.manage. |
+
+## dine.expenses
+
+| Method | Path | Summary | Authorization |
+|---|---|---|---|
+| GET | `/api/dine/expenses` | List expenses | Tenant user of dine with a usable subscription; plan feature: expenses; role permission: expenses.manage. |
+| POST | `/api/dine/expenses` | Create expense | Tenant user of dine with a usable subscription; plan feature: expenses; role permission: expenses.manage. |
+| DELETE | `/api/dine/expenses/:id` | Delete expense | Tenant user of dine with a usable subscription; plan feature: expenses; role permission: expenses.manage. |
+| GET | `/api/dine/expenses/:id` | Get one expense | Tenant user of dine with a usable subscription; plan feature: expenses; role permission: expenses.manage. |
+| PATCH | `/api/dine/expenses/:id` | Update expense | Tenant user of dine with a usable subscription; plan feature: expenses; role permission: expenses.manage. |
 
 ## dine.menu_items
 

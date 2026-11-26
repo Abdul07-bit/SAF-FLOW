@@ -157,7 +157,8 @@ describe("API authorisation policy (lint)", () => {
       "GET /docs/openapi.json",
       "GET /files/*key",
       "GET /health",
-      // Vercel Cron calls the renewal job with GET + Authorization: Bearer <CRON_SECRET>
+      // Scheduled jobs (cron secret). Vercel Cron calls them with GET + Authorization: Bearer <CRON_SECRET>
+      "GET /jobs/daily-reports",
       "GET /jobs/renewals",
       "GET /public/dine/menu/:qrToken",
       "GET /public/dine/orders/:token",
@@ -172,6 +173,7 @@ describe("API authorisation policy (lint)", () => {
       "POST /auth/link/inspect",
       "POST /auth/login",
       "POST /auth/password-reset",
+      "POST /jobs/daily-reports",
       "POST /jobs/renewals",
       "POST /public/dine/menu/:qrToken/order",
     ]);

@@ -12,6 +12,7 @@ import { ShopUpiQr } from "@/components/shop-upi";
 import { Badge, Button, Card, DataTable, Empty, Field, Input, Loadable, Modal, Notice, PageHeader, Select, StatusBadge, toast, useAction, cx } from "@/components/ui";
 import { newSplit, SplitPaymentEditor, splitParts, splitReady, type SplitRow } from "@/components/split-payment";
 import { describePayment } from "@/shared/tender";
+import { currentBusinessDate, formatDailyNo } from "@/lib/business-day";
 import { MobileBillBar } from "@/components/mobile-bill-bar";
 
 export const TENDERS = ["CASH", "UPI", "CARD", "WALLET", "CREDIT", "OTHER"] as const;
@@ -207,8 +208,8 @@ export function SettleForm({ order, onSettled }: { order: any; onSettled: (r: an
         <Field label="Customer phone" className="col-span-2"><Input type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="For the WhatsApp invoice" /></Field>
       </div>
       {isSplit && <SplitPaymentEditor total={t.total} rows={split} onChange={setSplit} />}
-      {method === "UPI" && <ShopUpiQr base={p.base} amount={t.total} note={`Order ${order.orderNo}`} />}
-      {isSplit && splitUpi > 0 && <ShopUpiQr base={p.base} amount={splitUpi} note={`Order ${order.orderNo}`} />}
+      {method === "UPI" && <ShopUpiQr base={p.base} amount={t.total} note={`Order ${formatDailyNo(order.dailyNo)}`} />}
+      {isSplit && splitUpi > 0 && <ShopUpiQr base={p.base} amount={splitUpi} note={`Order ${formatDailyNo(order.dailyNo)}`} />}
       {order.publicToken && (
         <a href={`/invoice/dine/${order.publicToken}`} target="_blank" rel="noreferrer" className="flex items-center justify-center gap-1.5 text-sm font-medium text-brand underline-offset-2 hover:underline">
           <ExternalLink className="h-4 w-4" /> Print / share bill (with UPI QR)
@@ -238,7 +239,7 @@ export function OrderModal({ orderId, onClose, onChanged }: { orderId: string; o
   const canSettle = p.can("billing.settle") && p.has(["cashier", "pos"]);
 
   return (
-    <Modal open onClose={onClose} title={o.data ? `Order #${o.data.orderNo}${o.data.table ? ` - Table ${o.data.table.name}` : ` - ${humanize(o.data.type)}`}` : "Order"} size="lg">
+    <Modal open onClose={onClose} title={o.data ? `Order #${formatDailyNo(o.data.dailyNo)}${o.data.table ? ` - Table ${o.data.table.name}` : ` - ${humanize(o.data.type)}`}` : "Order"} size="lg">
       {receipt ? <Receipt result={receipt} onClose={onClose} /> : (
         <Loadable state={o}>
           {(d) => {
@@ -361,7 +362,7 @@ export function DinePos() {
                 Bill & settle {formatINR(t.total)}
               </Button>
             )}
-            <Button className="w-full" loading={busy} disabled={!cart.lines.length || (type === "DINE_IN" && !tableId)} onClick={() => run(async () => { const o = await create(); toast(`Order #${o.orderNo} sent to kitchen`); reset(); })}>
+            <Button className="w-full" loading={busy} disabled={!cart.lines.length || (type === "DINE_IN" && !tableId)} onClick={() => run(async () => { const o = await create(); toast(`Order #${formatDailyNo(o.dailyNo)} sent to kitchen`); reset(); })}>
               <ChefHat className="h-4 w-4" /> Send to kitchen, pay later
             </Button>
           </div>
@@ -416,7 +417,7 @@ export function DineWaiter() {
                         <span className="mt-1 block"><StatusBadge value={t.status} /></span>
                         {t.order && (
                           <span className="mt-2 block text-xs text-slate-700">
-                            #{t.order.orderNo} - {t.order.items} items - {formatINR(t.order.total, { whole: true })}
+                            #{formatDailyNo(t.order.dailyNo)} - {t.order.items} items - {formatINR(t.order.total, { whole: true })}
                             {t.order.pendingQr > 0 && <span className="mt-1 flex items-center gap-1 font-semibold text-amber-900"><QrCode className="h-3.5 w-3.5" /> {t.order.pendingQr} to accept</span>}
                             {t.order.ready > 0 && <span className="mt-1 block font-semibold text-emerald-800">{t.order.ready} ready</span>}
                           </span>
@@ -429,7 +430,7 @@ export function DineWaiter() {
             </Card>
             {d.takeaway.length > 0 && (
               <Card title="Takeaway / delivery orders" pad={false}>
-                <ul className="divide-y divide-slate-100">{d.takeaway.map((o: any) => <li key={o.id}><button className="flex w-full justify-between px-4 py-2.5 text-left text-sm hover:bg-slate-50" onClick={() => setOpenOrder(o.id)}><span>#{o.orderNo} {humanize(o.type)}{o.customerName ? ` - ${o.customerName}` : ""}</span><span className="tnum font-medium">{formatINR(o.total)}</span></button></li>)}</ul>
+                <ul className="divide-y divide-slate-100">{d.takeaway.map((o: any) => <li key={o.id}><button className="flex w-full justify-between px-4 py-2.5 text-left text-sm hover:bg-slate-50" onClick={() => setOpenOrder(o.id)}><span>#{formatDailyNo(o.dailyNo)} {humanize(o.type)}{o.customerName ? ` - ${o.customerName}` : ""}</span><span className="tnum font-medium">{formatINR(o.total)}</span></button></li>)}</ul>
               </Card>
             )}
           </div>
@@ -560,7 +561,7 @@ export function DineCashier() {
               <Card pad={false} title="Bills to settle" subtitle={`${d.open.length} open`}>
                 <DataTable rows={d.open} rowKey={(r: any) => r.id} onRowClick={(r: any) => setOpen(r.id)} empty={<Empty title="No open bills" />}
                   columns={[
-                    { key: "o", label: "Order", render: (r: any) => <span className="font-medium">#{r.orderNo}</span> },
+                    { key: "o", label: "Order", render: (r: any) => <span className="font-medium">#{formatDailyNo(r.dailyNo)}</span> },
                     { key: "t", label: "Table / type", render: (r: any) => (r.table ? `Table ${r.table.name}` : humanize(r.type)) },
                     { key: "i", label: "Items", align: "right", render: (r: any) => r.items.filter((i: any) => i.status !== "CANCELLED").length },
                     { key: "a", label: "Amount", align: "right", render: (r: any) => formatINR(r.total) },
@@ -591,14 +592,16 @@ export function DineCashier() {
 // ---------------------------------------------------------------------------
 
 export function DineOrders() {
+  const p = useProduct();
   const [status, setStatus] = useState("");
-  const [date, setDate] = useState(todayIST());
+  // Business day: after midnight, a shop that is still open stays on yesterday's orders (#001 restarts at closing time).
+  const [date, setDate] = useState(() => (p.settings.openingTime && p.settings.closingTime ? currentBusinessDate({ openingTime: p.settings.openingTime, closingTime: p.settings.closingTime }) : todayIST()));
   const [q, setQ] = useState("");
   const list = useApi<{ items: any[] }>(`/dine/orders${qs({ status, date, q })}`, { refreshMs: 20_000 });
   const [open, setOpen] = useState<string | null>(null);
   return (
     <>
-      <PageHeader title="Orders" description="Every order, with its items and status."
+      <PageHeader title="Orders" description="Every order of the business day, with its items and status. Order numbers restart at #001 each day; the running number is shown below it."
         actions={<>
           <Input aria-label="Search orders" placeholder="Order no., name, phone" className="w-48" value={q} onChange={(e) => setQ(e.target.value)} />
           <Input aria-label="Date" type="date" className="w-40" value={date} onChange={(e) => setDate(e.target.value)} />
@@ -609,7 +612,7 @@ export function DineOrders() {
           {(d) => (
             <DataTable rows={d.items} rowKey={(r) => r.id} onRowClick={(r) => setOpen(r.id)} empty={<Empty title="No orders for this day" />}
               columns={[
-                { key: "o", label: "Order", render: (r) => <span className="font-medium">#{r.orderNo}</span> },
+                { key: "o", label: "Order", render: (r) => <span className="font-medium" title={`Running order no. ${r.orderNo}`}>#{formatDailyNo(r.dailyNo)}<span className="block text-xs font-normal text-slate-500">No. {r.orderNo}</span></span> },
                 { key: "time", label: "Time", render: (r) => fmtTime(r.createdAt) },
                 { key: "t", label: "Table / type", render: (r) => (r.table ? `Table ${r.table.name}` : humanize(r.type)) },
                 { key: "src", label: "Source", render: (r) => <Badge>{humanize(r.source)}</Badge> },

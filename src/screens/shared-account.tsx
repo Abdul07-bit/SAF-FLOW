@@ -48,6 +48,17 @@ const SETTINGS: Record<ProductCode, Record<string, FieldDef>> = {
   },
 };
 
+/** Business day and the Growth plan's daily WhatsApp report (same in every product). */
+const DAY_FIELDS: Record<string, FieldDef> = {
+  openingTime: f.time("Shop opens at", { required: true }),
+  closingTime: f.time("Shop closes at", {
+    required: true,
+    help: "If it closes after midnight (e.g. 02:00), sales and expenses until then count for the day before.",
+  }),
+  dailyReportEnabled: f.bool("Send the daily report to WhatsApp when the shop closes", { feature: "daily_report_whatsapp", help: "A PDF with the day's sales and expenses (Growth plan)." }),
+  reportWhatsApp: f.phone("Owner's WhatsApp number", { feature: "daily_report_whatsapp", help: "Leave empty to use the business phone number." }),
+};
+
 const PROFILE = {
   name: f.text("Business name", { required: true, max: 120 }),
   phone: f.phone("Phone", { required: true }),
@@ -138,9 +149,15 @@ export function SettingsScreen() {
     <>
       <PageHeader title="Settings" description={`${p.product.name} settings for ${p.tenant.name}.`} />
       <div className="grid gap-4 xl:grid-cols-2">
-        <Card title={`${p.product.shortName} settings`}>
-          <InlineForm fields={SETTINGS[p.code]} initial={p.settings} onSubmit={async (v) => { await api(`${p.base}/settings`, { method: "PUT", body: Object.fromEntries(Object.entries(v).map(([k, x]) => [k, x ?? ""])) }); await p.reload(); }} />
-        </Card>
+        <div className="space-y-4">
+          <Card title={`${p.product.shortName} settings`}>
+            <InlineForm fields={SETTINGS[p.code]} initial={p.settings} onSubmit={async (v) => { await api(`${p.base}/settings`, { method: "PUT", body: Object.fromEntries(Object.entries(v).map(([k, x]) => [k, x ?? ""])) }); await p.reload(); }} />
+          </Card>
+          <Card title="Business day" subtitle="Decides which date each order, bill and expense belongs to, when the daily order number restarts at 001, and when the daily report is sent.">
+            <InlineForm fields={Object.fromEntries(Object.entries(DAY_FIELDS).filter(([, fd]) => !fd.feature || p.has(fd.feature)))} initial={p.settings}
+              onSubmit={async (v) => { await api(`${p.base}/settings`, { method: "PUT", body: Object.fromEntries(Object.entries(v).map(([k, x]) => [k, x ?? ""])) }); await p.reload(); }} />
+          </Card>
+        </div>
         <div className="space-y-4">
           <Card title="Business profile" subtitle="Shared by all your SAF applications. Printed on invoices and ID cards.">
             {p.user.isTenantOwner ? (

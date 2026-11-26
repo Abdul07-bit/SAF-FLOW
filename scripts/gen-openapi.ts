@@ -18,7 +18,7 @@ writeFileSync("docs/openapi.json", JSON.stringify(buildOpenApi(routes), null, 2)
 const TAG_TITLES: Record<string, string> = {
   auth: "Authentication & session", admin: "Super Admin", team: "Staff logins & roles", staff: "Employee records (Growth)", attendance: "Attendance (Growth)",
   "id-cards": "ID cards & QR verification (Growth)", settings: "Settings", billing: "Subscription & SAF billing",
-  support: "Support", dine: "SAF Dine Flow", stay: "SAF Stay Flow", bill: "SAF Bill Flow", public: "Public (no sign-in)", system: "System",
+  support: "Support", "day-book": "Day book, expenses & daily report", dine: "SAF Dine Flow", stay: "SAF Stay Flow", bill: "SAF Bill Flow", public: "Public (no sign-in)", system: "System",
 };
 const ORDER = Object.keys(TAG_TITLES);
 

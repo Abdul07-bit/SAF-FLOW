@@ -325,7 +325,7 @@ export function DineWastage() {
 // ---------------------------------------------------------------------------
 
 export function DineReports() {
-  const range = useRange("7d");
+  const range = useRange("7d", useProduct().settings);
   const r = useApi<any>(`/dine/reports/sales?${range.query}`);
   return (
     <>

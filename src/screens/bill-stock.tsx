@@ -303,7 +303,7 @@ function PurchaseModal({ onClose, onSaved }: { onClose: () => void; onSaved: () 
 // ---------------------------------------------------------------------------
 
 export function BillReports() {
-  const range = useRange("7d");
+  const range = useRange("7d", useProduct().settings);
   const r = useApi<any>(`/bill/reports/sales?${range.query}`);
   return (
     <>

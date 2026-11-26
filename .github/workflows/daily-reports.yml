@@ -1,0 +1,42 @@
+# Daily closing reports (Growth plan): every 15 minutes, ask production to send
+# the WhatsApp PDF report of every shop whose closing time has just passed.
+#
+# Needed because Vercel's Hobby plan only runs its own cron jobs once a day.
+# The endpoint is idempotent (one report per shop and business day), so a
+# late, repeated or overlapping run never sends a second copy.
+# GitHub may delay scheduled runs by a few minutes at busy times.
+#
+# Secrets (Settings > Secrets and variables > Actions):
+#   PRODUCTION_URL           e.g. https://app.safflow.in (already used by deploy.yml)
+#   PRODUCTION_CRON_SECRET   the CRON_SECRET of the production Vercel project
+# Without them the workflow does nothing. On a VPS the docker `cron` service
+# calls the job instead (docker-compose.yml); leave these secrets unset there.
+
+name: daily-reports
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: daily-reports
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Run the daily report job
+        env:
+          APP_URL: ${{ secrets.PRODUCTION_URL }}
+          CRON_SECRET: ${{ secrets.PRODUCTION_CRON_SECRET }}
+        run: |
+          if [ -z "$APP_URL" ] || [ -z "$CRON_SECRET" ]; then
+            echo "PRODUCTION_URL / PRODUCTION_CRON_SECRET not set; nothing to do."; exit 0
+          fi
+          curl -fsS --max-time 240 -X POST -H "x-cron-secret: $CRON_SECRET" -H "x-saf-request: 1" "${APP_URL%/}/api/jobs/daily-reports"

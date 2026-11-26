@@ -368,6 +368,10 @@ route({
 
 export async function productContext(db: Tx, user: SessionUser, access: ProductAccess) {
   const p = PRODUCTS[access.product];
+  // Every role gets the settings (bill footer, business hours...); only those who
+  // manage settings see the owner's WhatsApp number for the daily report.
+  const { reportWhatsApp, ...shared } = await getProductSettings(db, user.tenantId!, access.product);
+  const settings = access.permissions.includes(`${access.product}.settings.manage`) ? { ...shared, reportWhatsApp } : shared;
   return {
     product: { code: p.code, name: p.name, shortName: p.shortName, tagline: p.tagline },
     tenant: await tenantHeader(db, user.tenantId!),
@@ -378,7 +382,7 @@ export async function productContext(db: Tx, user: SessionUser, access: ProductA
     permissions: access.permissions,
     branches: access.branches,
     multiBranch: access.features.includes(`${access.product}.multi_branch`),
-    settings: await getProductSettings(db, user.tenantId!, access.product),
+    settings,
   };
 }
 

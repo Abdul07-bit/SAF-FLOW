@@ -3,7 +3,7 @@ import { shopUpi } from "../payments/shop-upi";
 import { assertPublicLinkFresh } from "../core/public-links";
 import QRCode from "qrcode";
 import type { DineMovementType, Prisma } from "@prisma/client";
-import { addDays, endOfDayIST, financialYear, isISODate, istDate, istMinutes, startOfDayIST, todayIST } from "@/lib/dates";
+import { addDays, dateOnly, endOfDayIST, financialYear, fmtDate, fromDateOnly, isISODate, istDate, istMinutes, startOfDayIST, todayIST } from "@/lib/dates";
 import { computeTotals, formatINR } from "@/lib/money";
 import { dineCategories, dineMenuItems, dineStockItems, dineSuppliers, dineTables } from "@/shared/resources";
 import { route, type Ctx } from "../http/router";
@@ -12,7 +12,9 @@ import { badRequest, conflict, forbidden, HttpError, notFound } from "../http/er
 import { nextSeq, withPlatform, withTenant, type Tx } from "../db";
 import { token } from "../core/ids";
 import { tenantEntitled } from "../core/access";
-import { getProductSettings } from "../core/settings";
+import { getBusinessHours, getProductSettings } from "../core/settings";
+import { nextDailyNo } from "../core/daybook";
+import { currentBusinessDate, formatDailyNo } from "@/lib/business-day";
 import { fileUrl } from "../core/storage";
 import { whatsappLink } from "../core/notify";
 import { addTenders, assertSplitMatches, describePayment, splitPartsSchema } from "@/shared/tender";
@@ -126,14 +128,14 @@ async function priceItems(db: Tx, tenantId: string, items: z.infer<typeof itemIn
   });
 }
 
-async function sendKot(db: Tx, tenantId: string, order: { id: string; branchId: string; orderNo: number; type: string; table?: { name: string } | null }) {
+async function sendKot(db: Tx, tenantId: string, order: { id: string; branchId: string; orderNo: number; dailyNo: number; type: string; table?: { name: string } | null }) {
   const pending = await db.dineOrderItem.findMany({ where: { orderId: order.id, status: "NEW" } });
   if (!pending.length) return null;
   const kotNo = await nextSeq(db, tenantId, `dine-kot-${istDate(new Date())}`);
   const kot = await db.dineKitchenOrder.create({
     data: {
       tenantId, branchId: order.branchId, orderId: order.id, kotNo,
-      label: order.table ? `Table ${order.table.name}` : `${order.type === "DELIVERY" ? "Delivery" : "Takeaway"} #${order.orderNo}`,
+      label: order.table ? `Table ${order.table.name}` : `${order.type === "DELIVERY" ? "Delivery" : "Takeaway"} #${formatDailyNo(order.dailyNo)}`,
     },
   });
   await db.dineOrderItem.updateMany({ where: { id: { in: pending.map((p) => p.id) } }, data: { status: "SENT", kotId: kot.id } });
@@ -153,10 +155,11 @@ function invoiceLinks(o: { publicToken: string; customerPhone: string | null; to
 route({
   method: "GET", path: "/dine/dashboard", tag: "dine", summary: "Restaurant dashboard", auth: { product: "dine", feature: "dashboard", permission: "dashboard.view" },
   handler: async (ctx) => {
-    const today = { gte: startOfDayIST(todayIST()), lte: endOfDayIST(todayIST()) };
+    // "Today" is the business day: a shop open past midnight keeps counting until closing time.
+    const today = dateOnly(currentBusinessDate(await getBusinessHours(ctx.db, ctx.tenantId, "dine")));
     const scope = { tenantId: ctx.tenantId, branchId: ctx.branchId };
     const [paid, open, tables, stock, kots] = await Promise.all([
-      ctx.db.dineOrder.findMany({ where: { ...scope, status: "PAID", paidAt: today }, include: { items: true } }),
+      ctx.db.dineOrder.findMany({ where: { ...scope, status: "PAID", businessDate: today }, include: { items: true } }),
       ctx.db.dineOrder.count({ where: { ...scope, status: "OPEN" } }),
       ctx.db.dineTable.groupBy({ by: ["status"], _count: true, where: { ...scope, isActive: true } }),
       ctx.has("low_stock_alerts") ? ctx.db.dineStockItem.findMany({ where: { tenantId: ctx.tenantId, isActive: true } }) : Promise.resolve([]),
@@ -205,7 +208,7 @@ route({
         return {
           id: t.id, name: t.name, seats: t.seats, area: t.area, status: t.status,
           order: o ? {
-            id: o.id, orderNo: o.orderNo, total: o.total, guests: o.guests, waiter: o.waiter?.fullName ?? null, createdAt: o.createdAt,
+            id: o.id, orderNo: o.orderNo, dailyNo: o.dailyNo, total: o.total, guests: o.guests, waiter: o.waiter?.fullName ?? null, createdAt: o.createdAt,
             items: o.items.filter((i) => i.status !== "CANCELLED").length,
             pendingQr: o.items.filter((i) => i.status === "PENDING_ACCEPT").length,
             ready: o.items.filter((i) => i.status === "READY").length,
@@ -213,7 +216,7 @@ route({
         };
       }),
       ready: ready.map((k) => ({ id: k.id, kotNo: k.kotNo, label: k.label, readyAt: k.readyAt, items: k.items.filter((i) => i.status !== "CANCELLED").map((i) => ({ name: i.name, qty: i.qty })) })),
-      takeaway: openOrders.filter((o) => !o.tableId).map((o) => ({ id: o.id, orderNo: o.orderNo, type: o.type, total: o.total, customerName: o.customerName })),
+      takeaway: openOrders.filter((o) => !o.tableId).map((o) => ({ id: o.id, orderNo: o.orderNo, dailyNo: o.dailyNo, type: o.type, total: o.total, customerName: o.customerName })),
       pendingQr: openOrders.filter((o) => o.items.some((i) => i.status === "PENDING_ACCEPT")).length,
     };
   },
@@ -224,10 +227,10 @@ route({
   auth: { product: "dine", feature: ["cashier", "pos"], permission: "billing.settle" },
   handler: async (ctx) => {
     const scope = { tenantId: ctx.tenantId, branchId: ctx.branchId };
-    const today = { gte: startOfDayIST(todayIST()), lte: endOfDayIST(todayIST()) };
+    const today = dateOnly(currentBusinessDate(await getBusinessHours(ctx.db, ctx.tenantId, "dine")));
     const [open, settled] = await Promise.all([
       ctx.db.dineOrder.findMany({ where: { ...scope, status: "OPEN" }, include: orderInclude, orderBy: { createdAt: "asc" } }),
-      ctx.db.dineOrder.findMany({ where: { ...scope, status: "PAID", paidAt: today }, orderBy: { paidAt: "desc" }, include: { table: { select: { name: true } } } }),
+      ctx.db.dineOrder.findMany({ where: { ...scope, status: "PAID", businessDate: today }, orderBy: { paidAt: "desc" }, include: { table: { select: { name: true } } } }),
     ]);
     const byMethod: Record<string, number> = {};
     for (const o of settled) addTenders(byMethod, o);
@@ -292,10 +295,16 @@ route({
   handler: async (ctx) => {
     const where: Prisma.DineOrderWhereInput = { tenantId: ctx.tenantId, branchId: ctx.branchId };
     if (ctx.query.status) where.status = ctx.query.status;
-    if (ctx.query.date) where.createdAt = { gte: startOfDayIST(ctx.query.date), lte: endOfDayIST(ctx.query.date) };
+    // A date is a business day (orders after midnight before closing time belong to the day before).
+    if (ctx.query.date) where.businessDate = dateOnly(ctx.query.date);
     if (ctx.query.q) {
-      const n = Number(ctx.query.q);
-      where.OR = [{ customerName: { contains: ctx.query.q, mode: "insensitive" } }, { customerPhone: { contains: ctx.query.q } }, { invoiceNo: { contains: ctx.query.q } }, ...(Number.isInteger(n) ? [{ orderNo: n }] : [])];
+      const n = Number(ctx.query.q.replace(/^#/, ""));
+      // A number matches today's daily order number or the running order number.
+      const today = dateOnly(ctx.query.date ?? currentBusinessDate(await getBusinessHours(ctx.db, ctx.tenantId, "dine")));
+      where.OR = [
+        { customerName: { contains: ctx.query.q, mode: "insensitive" } }, { customerPhone: { contains: ctx.query.q } }, { invoiceNo: { contains: ctx.query.q } },
+        ...(Number.isInteger(n) && n > 0 ? [{ orderNo: n }, { dailyNo: n, businessDate: today }] : []),
+      ];
     }
     const items = await ctx.db.dineOrder.findMany({ where, include: orderInclude, orderBy: { createdAt: "desc" }, take: 200 });
     return { items };
@@ -332,9 +341,10 @@ route({
     }
     const lines = await priceItems(ctx.db, ctx.tenantId, b.items);
     const orderNo = await nextSeq(ctx.db, ctx.tenantId, "dine-order");
+    const day = await nextDailyNo(ctx.db, ctx.tenantId, "dine", ctx.branchId);
     const order = await ctx.db.dineOrder.create({
       data: {
-        tenantId: ctx.tenantId, branchId: ctx.branchId, orderNo, tableId: table?.id ?? null, type: b.type, source: b.source,
+        tenantId: ctx.tenantId, branchId: ctx.branchId, orderNo, businessDate: day.businessDate, dailyNo: day.dailyNo, tableId: table?.id ?? null, type: b.type, source: b.source,
         customerName: b.customerName || null, customerPhone: b.customerPhone || null, guests: b.guests, notes: b.notes || null,
         waiterId: b.source === "WAITER" ? ctx.user.id : null, createdById: ctx.user.id, publicToken: token(18),
         items: { create: lines.map((l) => ({ ...l, tenantId: ctx.tenantId })) },
@@ -344,7 +354,7 @@ route({
     if (table) await ctx.db.dineTable.update({ where: { id: table.id }, data: { status: "OCCUPIED" } });
     if (b.sendToKitchen) await sendKot(ctx.db, ctx.tenantId, order);
     await recalc(ctx.db, order.id);
-    await ctx.audit("dine.order.create", { type: "dine_order", id: order.id }, { orderNo, items: lines.length });
+    await ctx.audit("dine.order.create", { type: "dine_order", id: order.id }, { orderNo, dailyNo: day.dailyNo, items: lines.length });
     ctx.status = 201;
     return loadOrder(ctx, order.id);
   },
@@ -528,7 +538,7 @@ route({
         tenantId: ctx.tenantId, branchId: ctx.branchId,
         OR: [{ status: { in: ["NEW", "PREPARING"] } }, { status: "READY", readyAt: { gte: recent } }],
       },
-      include: { items: { where: { status: { not: "CANCELLED" } } }, order: { select: { orderNo: true, type: true, notes: true, guests: true } } },
+      include: { items: { where: { status: { not: "CANCELLED" } } }, order: { select: { orderNo: true, dailyNo: true, type: true, notes: true, guests: true } } },
       orderBy: { createdAt: "asc" },
     });
     return { items: tickets, serverTime: new Date() };
@@ -787,17 +797,22 @@ route({
   method: "GET", path: "/dine/reports/sales", tag: "dine", summary: "Sales report: totals, daily trend, payment split, top items",
   auth: { product: "dine", feature: "reports_basic", permission: "reports.view" }, query: rangeQuery,
   handler: async (ctx) => {
-    const { from, to, gte, lte } = ctx.query;
+    const { from, to } = ctx.query;
+    // By business day, like the day book (late-night orders count for the day the shop opened).
+    const businessDate = { gte: dateOnly(from), lte: dateOnly(to) };
     const [orders, cancelled] = await Promise.all([
-      paidOrders(ctx, gte, lte),
-      ctx.db.dineOrder.count({ where: { tenantId: ctx.tenantId, branchId: ctx.branchId, status: "CANCELLED", updatedAt: { gte, lte } } }),
+      ctx.db.dineOrder.findMany({
+        where: { tenantId: ctx.tenantId, branchId: ctx.branchId, status: "PAID", businessDate },
+        include: { items: { where: { status: { not: "CANCELLED" } } } },
+      }),
+      ctx.db.dineOrder.count({ where: { tenantId: ctx.tenantId, branchId: ctx.branchId, status: "CANCELLED", businessDate } }),
     ]);
     const days: Record<string, { date: string; sales: number; orders: number }> = {};
     for (let d = from; d <= to; d = addDays(d, 1)) days[d] = { date: d, sales: 0, orders: 0 };
     const methods: Record<string, number> = {};
     const items: Record<string, { name: string; qty: number; revenue: number }> = {};
     for (const o of orders) {
-      const d = istDate(o.paidAt!);
+      const d = fromDateOnly(o.businessDate);
       if (days[d]) { days[d].sales += o.total; days[d].orders++; }
       addTenders(methods, o);
       for (const i of o.items) {
@@ -935,9 +950,10 @@ route({
       let order = await db.dineOrder.findFirst({ where: { tableId: t.id, status: "OPEN" }, include: { table: true } });
       if (!order) {
         const orderNo = await nextSeq(db, t.tenantId, "dine-order");
+        const day = await nextDailyNo(db, t.tenantId, "dine", t.branchId);
         order = await db.dineOrder.create({
           data: {
-            tenantId: t.tenantId, branchId: t.branchId, orderNo, tableId: t.id, type: "DINE_IN", source: "QR",
+            tenantId: t.tenantId, branchId: t.branchId, orderNo, businessDate: day.businessDate, dailyNo: day.dailyNo, tableId: t.id, type: "DINE_IN", source: "QR",
             customerName: ctx.body.customerName || null, customerPhone: ctx.body.customerPhone || null, notes: ctx.body.notes || null,
             publicToken: token(18),
           },
@@ -949,7 +965,7 @@ route({
       if (status === "NEW") await sendKot(db, t.tenantId, order);
       await recalc(db, order.id);
       ctx.status = 201;
-      return { orderToken: order.publicToken, orderNo: order.orderNo, awaitingConfirmation: status === "PENDING_ACCEPT" };
+      return { orderToken: order.publicToken, orderNo: order.orderNo, dailyNo: order.dailyNo, awaitingConfirmation: status === "PENDING_ACCEPT" };
     });
   },
 });
@@ -972,7 +988,7 @@ route({
   handler: async (ctx) => {
     const { order, business } = await publicOrder(ctx.params.token);
     return {
-      restaurant: business.name, orderNo: order.orderNo, status: order.status, table: order.table?.name ?? null,
+      restaurant: business.name, orderNo: order.orderNo, dailyNo: order.dailyNo, status: order.status, table: order.table?.name ?? null,
       items: order.items.map((i) => ({ name: i.name, qty: i.qty, status: i.status, amount: i.unitPrice * i.qty })),
       total: order.total, invoiceReady: order.status === "PAID",
     };
@@ -989,10 +1005,10 @@ route({
     const sellerName = settings.restaurantName || business.name;
     return {
       kind: "dine", isPaid: paid,
-      pay: paid ? null : await shopUpi(business, order.total, `Order ${order.orderNo}`, sellerName),
+      pay: paid ? null : await shopUpi(business, order.total, `Order ${formatDailyNo(order.dailyNo)}`, sellerName),
       seller: { name: settings.restaurantName || business.name, address: [business.address, business.city, business.state, business.pincode].filter(Boolean).join(", "), phone: business.phone, gstin: settings.gstin || business.gstin, logoUrl: business.logoUrl },
       invoiceNo: order.invoiceNo, date: order.paidAt ?? order.createdAt, customer: { name: order.customerName, phone: order.customerPhone },
-      meta: [order.table ? `Table ${order.table.name}` : order.type.replace("_", " "), `Order #${order.orderNo}`, ...(paid ? [`Paid by ${describePayment(order)}`] : [])],
+      meta: [order.table ? `Table ${order.table.name}` : order.type.replace("_", " "), `Order #${formatDailyNo(order.dailyNo)} (${fmtDate(order.businessDate)})`, ...(paid ? [`Paid by ${describePayment(order)}`] : [])],
       lines: order.items.filter((i) => i.status !== "CANCELLED").map((i) => ({ name: i.name, qty: i.qty, rate: i.unitPrice, taxRate: i.taxRate, amount: i.unitPrice * i.qty })),
       subtotal: order.subtotal, discount: order.discount, tax: order.taxTotal, total: order.total, footer: settings.receiptFooter,
     };

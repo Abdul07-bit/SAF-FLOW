@@ -3,6 +3,10 @@ import { f, type ResourceDef } from "./fields";
 const TENDERS = ["CASH", "UPI", "CARD", "WALLET", "CREDIT", "OTHER"] as const;
 export const ID_TYPES = ["AADHAAR", "PASSPORT", "DRIVING_LICENSE", "VOTER_ID", "PAN", "OTHER"] as const;
 export const EXPENSE_CATEGORIES = ["UTILITIES", "SUPPLIES", "MAINTENANCE", "SALARY", "LAUNDRY", "FOOD", "MARKETING", "RENT", "OTHER"] as const;
+/** Restaurant and shop expenses. */
+export const SHOP_EXPENSE_CATEGORIES = [
+  "RAW_MATERIALS", "GAS_FUEL", "UTILITIES", "SALARY", "RENT", "MAINTENANCE", "SUPPLIES", "TRANSPORT", "MARKETING", "TEA_SNACKS", "OTHER",
+] as const;
 export const UNITS = ["pcs", "kg", "g", "l", "ml", "box", "pack", "dozen", "bottle", "plate"] as const;
 
 // ---------------------------------------------------------------------------
@@ -179,25 +183,36 @@ export const stayGuests: ResourceDef = {
   search: ["fullName", "phone", "email", "idNumber"],
 };
 
-export const stayExpenses: ResourceDef = {
-  key: "stay.expenses", product: "stay", api: "/stay/expenses", title: "Expenses", singular: "Expense",
-  fields: {
-    expenseDate: f.date("Date", { required: true }),
-    category: f.select("Category", EXPENSE_CATEGORIES, { required: true }),
-    description: f.text("Description", { required: true, max: 200 }),
-    amount: f.money("Amount", { required: true }),
-    method: f.select("Paid by", TENDERS, { default: "CASH" }),
-    paidTo: f.text("Paid to", { max: 100 }),
-  },
-  columns: [
-    { key: "expenseDate", label: "Date", type: "date" }, { key: "category", label: "Category", type: "badge" },
-    { key: "description", label: "Description" }, { key: "amount", label: "Amount", type: "money" },
-    { key: "method", label: "Method" }, { key: "paidTo", label: "Paid to" },
-  ],
-  read: { feature: "expenses", permission: "expenses.manage" },
-  write: { feature: "expenses", permission: "expenses.manage" },
-  branchScoped: true, search: ["description", "paidTo"],
-};
+/**
+ * Expense resource for one product. The date is optional: left empty, the
+ * server books the expense on the shop's current business day (after-midnight
+ * spending before closing time goes to the previous date).
+ */
+function expenses(product: "dine" | "stay" | "bill", categories: readonly string[]): ResourceDef {
+  return {
+    key: `${product}.expenses`, product, api: `/${product}/expenses`, title: "Expenses", singular: "Expense",
+    fields: {
+      expenseDate: f.date("Date", { help: "Leave empty for today's business day." }),
+      category: f.select("Category", categories, { required: true }),
+      description: f.text("Description", { required: true, max: 200 }),
+      amount: f.money("Amount", { required: true }),
+      method: f.select("Paid by", TENDERS, { default: "CASH" }),
+      paidTo: f.text("Paid to", { max: 100 }),
+    },
+    columns: [
+      { key: "expenseDate", label: "Date", type: "date" }, { key: "category", label: "Category", type: "badge" },
+      { key: "description", label: "Description" }, { key: "amount", label: "Amount", type: "money" },
+      { key: "method", label: "Method" }, { key: "paidTo", label: "Paid to" },
+    ],
+    read: { feature: "expenses", permission: "expenses.manage" },
+    write: { feature: "expenses", permission: "expenses.manage" },
+    branchScoped: true, search: ["description", "paidTo"],
+  };
+}
+
+export const stayExpenses = expenses("stay", EXPENSE_CATEGORIES);
+export const dineExpenses = expenses("dine", SHOP_EXPENSE_CATEGORIES);
+export const billExpenses = expenses("bill", SHOP_EXPENSE_CATEGORIES);
 
 // ---------------------------------------------------------------------------
 // Bill Flow
@@ -309,8 +324,8 @@ export const shifts: ResourceDef = {
 };
 
 export const RESOURCES: ResourceDef[] = [
-  dineTables, dineCategories, dineMenuItems, dineStockItems, dineSuppliers,
+  dineTables, dineCategories, dineMenuItems, dineStockItems, dineSuppliers, dineExpenses,
   stayRoomTypes, stayRooms, stayGuests, stayExpenses,
-  billCategories, billProducts, billCustomers, billSuppliers, billCounters,
+  billCategories, billProducts, billCustomers, billSuppliers, billCounters, billExpenses,
   branches, shifts,
 ];

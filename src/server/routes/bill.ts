@@ -2,7 +2,9 @@ import { z } from "zod";
 import { shopUpi } from "../payments/shop-upi";
 import { assertPublicLinkFresh } from "../core/public-links";
 import type { BillMovementType, Prisma } from "@prisma/client";
-import { addDays, endOfDayIST, financialYear, istDate, istMinutes, startOfDayIST, todayIST } from "@/lib/dates";
+import { addDays, dateOnly, financialYear, fromDateOnly, istMinutes, startOfDayIST, todayIST } from "@/lib/dates";
+import { currentBusinessDate, formatDailyNo } from "@/lib/business-day";
+import { nextDailyNo } from "../core/daybook";
 import { computeTotals } from "@/lib/money";
 import { billCategories, billCounters, billCustomers, billProducts, billSuppliers } from "@/shared/resources";
 import { route, type Ctx } from "../http/router";
@@ -10,7 +12,7 @@ import { registerCrud } from "../http/crud";
 import { badRequest, conflict, HttpError, notFound } from "../http/errors";
 import { nextSeq, withPlatform, withTenant, type Tx } from "../db";
 import { token } from "../core/ids";
-import { getProductSettings } from "../core/settings";
+import { getBusinessHours, getProductSettings } from "../core/settings";
 import { fileUrl } from "../core/storage";
 import { addTenders, assertSplitMatches, cashPart, describePayment, splitPartsSchema } from "@/shared/tender";
 import { rangeQuery } from "./dine";
@@ -107,11 +109,12 @@ route({
 route({
   method: "GET", path: "/bill/dashboard", tag: "bill", summary: "Retail dashboard", auth: { product: "bill", feature: "dashboard", permission: "dashboard.view" },
   handler: async (ctx) => {
-    const today = todayIST();
+    // "Today" is the business day: a shop open past midnight keeps counting until closing time.
+    const today = currentBusinessDate(await getBusinessHours(ctx.db, ctx.tenantId, "bill"));
     const scope = { tenantId: ctx.tenantId, branchId: ctx.branchId, status: "COMPLETED" as const };
     const [todaySales, week, products] = await Promise.all([
-      ctx.db.billSale.findMany({ where: { ...scope, createdAt: { gte: startOfDayIST(today), lte: endOfDayIST(today) } }, include: { items: true } }),
-      ctx.db.billSale.findMany({ where: { ...scope, createdAt: { gte: startOfDayIST(addDays(today, -6)) } }, select: { total: true, createdAt: true } }),
+      ctx.db.billSale.findMany({ where: { ...scope, businessDate: dateOnly(today) }, include: { items: true } }),
+      ctx.db.billSale.findMany({ where: { ...scope, businessDate: { gte: dateOnly(addDays(today, -6)), lte: dateOnly(today) } }, select: { total: true, businessDate: true } }),
       ctx.has("low_stock_alerts") ? ctx.db.billProduct.findMany({ where: { tenantId: ctx.tenantId, isActive: true }, select: { id: true, name: true, reorderLevel: true, unit: true } }) : Promise.resolve([]),
     ]);
     const stock = await stockMap(ctx.db, ctx.branchId, products.map((p) => p.id));
@@ -133,7 +136,7 @@ route({
     }
     const days = Array.from({ length: 7 }, (_, i) => ({ date: addDays(today, i - 6), sales: 0 }));
     for (const s of week) {
-      const d = days.find((x) => x.date === istDate(s.createdAt));
+      const d = days.find((x) => x.date === fromDateOnly(s.businessDate));
       if (d) d.sales += s.total;
     }
     return {
@@ -151,10 +154,10 @@ route({
   method: "GET", path: "/bill/cashier", tag: "bill", summary: "Cashier dashboard: my shift totals and recent bills",
   auth: { product: "bill", feature: "cashier", permission: "pos.use" },
   handler: async (ctx) => {
-    const today = todayIST();
+    const today = currentBusinessDate(await getBusinessHours(ctx.db, ctx.tenantId, "bill"));
     const [mine, counters] = await Promise.all([
       ctx.db.billSale.findMany({
-        where: { tenantId: ctx.tenantId, branchId: ctx.branchId, cashierId: ctx.user.id, createdAt: { gte: startOfDayIST(today), lte: endOfDayIST(today) } },
+        where: { tenantId: ctx.tenantId, branchId: ctx.branchId, cashierId: ctx.user.id, businessDate: dateOnly(today) },
         include: { customer: { select: { name: true } }, counter: { select: { name: true } } }, orderBy: { createdAt: "desc" },
       }),
       ctx.db.billCounter.findMany({ where: { tenantId: ctx.tenantId, branchId: ctx.branchId, isActive: true }, orderBy: { name: "asc" } }),
@@ -239,9 +242,10 @@ route({
     const fy = financialYear(todayIST()).label;
     const saleNo = await nextSeq(ctx.db, ctx.tenantId, "bill-sale");
     const invSeq = await nextSeq(ctx.db, ctx.tenantId, `bill-invoice-${fy}`);
+    const day = await nextDailyNo(ctx.db, ctx.tenantId, "bill", ctx.branchId);
     const sale = await ctx.db.billSale.create({
       data: {
-        tenantId: ctx.tenantId, branchId: ctx.branchId, counterId, saleNo,
+        tenantId: ctx.tenantId, branchId: ctx.branchId, counterId, saleNo, businessDate: day.businessDate, dailyNo: day.dailyNo,
         invoiceNo: `${settings.invoicePrefix}/${fy}/${String(invSeq).padStart(5, "0")}`,
         customerId, cashierId: ctx.user.id, subtotal: totals.subtotal, discount: totals.discount, taxTotal: totals.taxTotal,
         total: totals.total, paymentMethod: b.paymentMethod, ...(split ? { paymentSplit: split } : {}), amountPaid,
@@ -269,10 +273,16 @@ route({
   method: "GET", path: "/bill/sales", tag: "bill", summary: "Sales / invoices", auth: SALES_READ,
   query: rangeQuery.and(z.object({ q: z.string().max(60).optional(), status: z.enum(["COMPLETED", "VOID"]).optional() })),
   handler: async (ctx) => {
+    const q = ctx.query.q;
+    const n = q ? Number(q.replace(/^#/, "")) : NaN;
     const where: Prisma.BillSaleWhereInput = {
-      tenantId: ctx.tenantId, branchId: ctx.branchId, createdAt: { gte: ctx.query.gte, lte: ctx.query.lte },
+      // Dates are business days (bills after midnight before closing time belong to the day before).
+      tenantId: ctx.tenantId, branchId: ctx.branchId, businessDate: { gte: dateOnly(ctx.query.from), lte: dateOnly(ctx.query.to) },
       ...(ctx.query.status ? { status: ctx.query.status } : {}),
-      ...(ctx.query.q ? { OR: [{ invoiceNo: { contains: ctx.query.q, mode: "insensitive" } }, { customer: { name: { contains: ctx.query.q, mode: "insensitive" } } }, { customer: { phone: { contains: ctx.query.q } } }] } : {}),
+      ...(q ? { OR: [
+        { invoiceNo: { contains: q, mode: "insensitive" } }, { customer: { name: { contains: q, mode: "insensitive" } } }, { customer: { phone: { contains: q } } },
+        ...(Number.isInteger(n) && n > 0 ? [{ dailyNo: n }] : []),
+      ] } : {}),
     };
     const items = await ctx.db.billSale.findMany({ where, include: saleInclude, orderBy: { createdAt: "desc" }, take: 500 });
     return { items, from: ctx.query.from, to: ctx.query.to, total: items.filter((s) => s.status === "COMPLETED").reduce((a, s) => a + s.total, 0) };
@@ -545,10 +555,15 @@ route({
   method: "GET", path: "/bill/reports/sales", tag: "bill", summary: "Sales report: totals, daily trend, payment split, top products",
   auth: { product: "bill", feature: "reports_basic", permission: "reports.view" }, query: rangeQuery,
   handler: async (ctx) => {
-    const { from, to, gte, lte } = ctx.query;
+    const { from, to } = ctx.query;
+    // By business day, like the day book (late-night bills count for the day the shop opened).
+    const businessDate = { gte: dateOnly(from), lte: dateOnly(to) };
     const [sales, voided] = await Promise.all([
-      completedSales(ctx, gte, lte),
-      ctx.db.billSale.aggregate({ _count: true, _sum: { total: true }, where: { tenantId: ctx.tenantId, branchId: ctx.branchId, status: "VOID", createdAt: { gte, lte } } }),
+      ctx.db.billSale.findMany({
+        where: { tenantId: ctx.tenantId, branchId: ctx.branchId, status: "COMPLETED", businessDate },
+        include: { items: { include: { product: { select: { categoryId: true, category: { select: { name: true } } } } } } },
+      }),
+      ctx.db.billSale.aggregate({ _count: true, _sum: { total: true }, where: { tenantId: ctx.tenantId, branchId: ctx.branchId, status: "VOID", businessDate } }),
     ]);
     const days: Record<string, { date: string; sales: number; bills: number }> = {};
     for (let d = from; d <= to; d = addDays(d, 1)) days[d] = { date: d, sales: 0, bills: 0 };
@@ -556,7 +571,7 @@ route({
     const top: Record<string, { name: string; qty: number; revenue: number }> = {};
     const cats: Record<string, number> = {};
     for (const s of sales) {
-      const d = istDate(s.createdAt);
+      const d = fromDateOnly(s.businessDate);
       if (days[d]) { days[d].sales += s.total; days[d].bills++; }
       addTenders(methods, s);
       for (const i of s.items) {
@@ -662,7 +677,7 @@ route({
         pay: paid || s.status === "VOID" ? null : await shopUpi(business, s.total, s.invoiceNo ?? "Bill", sellerName),
         seller: { name: settings.storeName || business.name, address: [business.address, business.city, business.state, business.pincode].filter(Boolean).join(", "), phone: business.phone, gstin: settings.gstin || business.gstin, logoUrl: fileUrl(business.logoKey) },
         invoiceNo: s.invoiceNo, date: s.createdAt, customer: { name: s.customer?.name ?? null, phone: s.customer?.phone ?? null },
-        meta: [s.counter?.name ?? "", `Cashier: ${s.cashier?.fullName ?? "-"}`, `Paid by ${describePayment(s)}`].filter(Boolean),
+        meta: [`Bill #${formatDailyNo(s.dailyNo)}`, s.counter?.name ?? "", `Cashier: ${s.cashier?.fullName ?? "-"}`, `Paid by ${describePayment(s)}`].filter(Boolean),
         lines: s.items.map((i) => ({ name: i.name, qty: i.qty, rate: i.unitPrice, taxRate: i.taxRate, amount: Math.round(i.unitPrice * i.qty), discount: i.discount })),
         subtotal: s.subtotal, discount: s.discount, tax: s.taxTotal, total: s.total, amountPaid: s.amountPaid, changeDue: s.changeDue,
         footer: settings.receiptFooter,

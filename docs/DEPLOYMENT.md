@@ -139,8 +139,9 @@ Do not run production over plain HTTP: sessions and passwords would travel unenc
 - **Only Nginx is published.** The app trusts the `X-Forwarded-For` header for
   audit logs and rate limiting, and Nginx overwrites it with the real client
   address. Never publish the app's port 3000 directly.
-- `POST /api/jobs/renewals` is blocked at Nginx; the `cron` container calls it
-  on the internal network every 6 hours with `CRON_SECRET`.
+- `POST /api/jobs/renewals` and `POST /api/jobs/daily-reports` are blocked at
+  Nginx; the `cron` container calls them on the internal network with
+  `CRON_SECRET`: daily reports every 15 minutes, renewals every 6 hours.
 
 ## 6. Payments (UPI)
 

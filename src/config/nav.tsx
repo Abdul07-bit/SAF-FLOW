@@ -1,5 +1,5 @@
 import {
-  BadgeCheck, BarChart3, BedDouble, Boxes, Building2, CalendarClock, CalendarDays, CalendarRange, ChefHat, ClipboardList, ConciergeBell,
+  BadgeCheck, BarChart3, BedDouble, BookOpen, Boxes, Building2, CalendarClock, CalendarDays, CalendarRange, ChefHat, ClipboardList, ConciergeBell,
   CreditCard, FileText, Fingerprint, Gauge, History, IdCard, Landmark, LayoutDashboard, LifeBuoy, LineChart, ListChecks, MonitorSmartphone,
   Package, PackagePlus, PlusCircle, QrCode, Receipt, ScanBarcode, ScrollText, Settings, ShieldCheck, ShoppingCart, SlidersHorizontal, Sparkles, Store,
   Tags, Trash2, Truck, UserCog, Users, UsersRound, UtensilsCrossed, Wallet, Wrench, type LucideIcon,
@@ -34,6 +34,18 @@ const TEAM: NavSection = {
     { slug: "shifts", label: "Shifts & roster", icon: CalendarRange, feature: "shifts", permission: "shifts.manage" },
     { slug: "id-cards", label: "ID cards", icon: IdCard, feature: "id_cards", permission: "employees.manage" },
     { slug: "verify", label: "Verify staff ID", icon: BadgeCheck, feature: "qr_verification", permission: ["staff.verify", "attendance.manage"] },
+  ],
+};
+
+/** Day book: sales, order count and expenses per business day (manager / owner). */
+const DAY_BOOK: NavItem = { slug: "day-book", label: "Day book", icon: BookOpen, feature: "day_book", permission: "dashboard.view" };
+
+/** Daily expenses and the day book (Dine and Bill; Stay keeps them under Billing). */
+const ACCOUNTS: NavSection = {
+  title: "Accounts",
+  items: [
+    { slug: "expenses", label: "Expenses", icon: Receipt, feature: "expenses", permission: "expenses.manage" },
+    DAY_BOOK,
   ],
 };
 
@@ -79,6 +91,7 @@ export const PRODUCT_NAV: Record<ProductCode, NavSection[]> = {
         { slug: "stock-ledger", label: "Stock ledger", icon: History, feature: "inventory_advanced", permission: "inventory.view" },
       ],
     },
+    ACCOUNTS,
     {
       title: "Insights",
       items: [
@@ -106,6 +119,7 @@ export const PRODUCT_NAV: Record<ProductCode, NavSection[]> = {
         { slug: "cashier", label: "Cashier", icon: Wallet, feature: "room_billing", permission: "billing.view" },
         { slug: "invoices", label: "Invoices", icon: FileText, feature: "invoices", permission: "invoices.view" },
         { slug: "expenses", label: "Expenses", icon: Receipt, feature: "expenses", permission: "expenses.manage" },
+        DAY_BOOK,
       ],
     },
     {
@@ -151,6 +165,7 @@ export const PRODUCT_NAV: Record<ProductCode, NavSection[]> = {
         { slug: "counters", label: "POS counters", icon: Store, feature: "multi_counter", permission: "counters.manage" },
       ],
     },
+    ACCOUNTS,
     {
       title: "Insights",
       items: [

@@ -2,6 +2,7 @@ import type { Prisma } from "@prisma/client";
 import { z } from "zod";
 import type { ProductCode } from "@/config/catalog";
 import type { Tx } from "../db";
+import type { BusinessHours } from "@/lib/business-day";
 
 // ---------------------------------------------------------------------------
 // Platform (Super Admin) global settings
@@ -74,6 +75,23 @@ export async function savePlatformSettings(db: Tx, patch: Partial<PlatformSettin
 // Product-specific tenant settings
 // ---------------------------------------------------------------------------
 
+const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
+const PHONE = /^[+\d][\d\s-]{6,18}$/;
+
+/**
+ * Business day and daily closing report, the same in every product.
+ * Opening / closing time decide which date a late-night sale belongs to
+ * (see src/lib/business-day.ts); the closing time is also when the Growth
+ * plan's daily PDF report goes to the owner's WhatsApp.
+ */
+const dayFields = {
+  openingTime: z.string().regex(HHMM).default("09:00"),
+  closingTime: z.string().regex(HHMM).default("23:00"),
+  dailyReportEnabled: z.boolean().default(true),
+  /** Owner's WhatsApp number for the daily report. Empty: the business phone. */
+  reportWhatsApp: z.union([z.literal(""), z.string().trim().regex(PHONE, "Enter a valid WhatsApp number")]).default(""),
+};
+
 export const productSettingsSchemas = {
   dine: z.object({
     restaurantName: z.string().max(100).default(""),
@@ -81,6 +99,7 @@ export const productSettingsSchemas = {
     gstin: z.string().max(20).default(""),
     qrOrderingAutoAccept: z.boolean().default(false),
     receiptFooter: z.string().max(200).default("Thank you! Please visit again."),
+    ...dayFields,
   }),
   stay: z.object({
     hotelName: z.string().max(100).default(""),
@@ -91,6 +110,7 @@ export const productSettingsSchemas = {
     /** GST on room tariff (12% for rooms under Rs 7,500 / night). */
     roomTaxBp: z.number().int().min(0).max(2800).default(1200),
     invoiceFooter: z.string().max(200).default("Thank you for staying with us."),
+    ...dayFields,
   }),
   bill: z.object({
     storeName: z.string().max(100).default(""),
@@ -98,6 +118,7 @@ export const productSettingsSchemas = {
     gstin: z.string().max(20).default(""),
     allowNegativeStock: z.boolean().default(false),
     receiptFooter: z.string().max(200).default("Thank you for shopping with us!"),
+    ...dayFields,
   }),
 } as const;
 
@@ -119,4 +140,10 @@ export async function saveProductSettings(db: Tx, tenantId: string, product: Pro
     update: { settings: merged as Prisma.InputJsonValue },
   });
   return merged;
+}
+
+/** Opening / closing time of one product's shop (decides the business day). */
+export async function getBusinessHours(db: Tx, tenantId: string, product: ProductCode): Promise<BusinessHours> {
+  const s = await getProductSettings(db, tenantId, product);
+  return { openingTime: s.openingTime, closingTime: s.closingTime };
 }

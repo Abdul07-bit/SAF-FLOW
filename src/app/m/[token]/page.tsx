@@ -22,7 +22,7 @@ interface MenuData {
   orderingEnabled: boolean;
   categories: { id: string; name: string; items: MenuItem[] }[];
 }
-interface Tracking { restaurant: string; orderNo: number; status: string; table: string | null; items: { name: string; qty: number; status: string; amount: number }[]; total: number; invoiceReady: boolean }
+interface Tracking { restaurant: string; orderNo: number; dailyNo: number; status: string; table: string | null; items: { name: string; qty: number; status: string; amount: number }[]; total: number; invoiceReady: boolean }
 
 const ITEM_STATUS: Record<string, string> = { PENDING_ACCEPT: "Waiting for confirmation", NEW: "Sent to kitchen", PREPARING: "Being prepared", READY: "Ready", SERVED: "Served", CANCELLED: "Cancelled" };
 
@@ -44,7 +44,7 @@ function OrderStatus({ token, onOrderMore }: { token: string; onOrderMore: () =>
   return (
     <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm" aria-live="polite">
       <div className="flex items-center justify-between gap-2">
-        <h2 className="text-base font-semibold text-slate-900">Your order #{d.orderNo}</h2>
+        <h2 className="text-base font-semibold text-slate-900">Your order #{String(d.dailyNo).padStart(3, "0")}</h2>
         <StatusBadge value={d.status} />
       </div>
       {waiting && <p className="mt-2 flex items-center gap-1.5 text-sm text-amber-900"><Clock className="h-4 w-4" aria-hidden /> A waiter will confirm your order shortly.</p>}

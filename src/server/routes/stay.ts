@@ -8,7 +8,7 @@ import {
 } from "@/lib/dates";
 import { taxOn } from "@/lib/money";
 import { ID_TYPES } from "@/shared/resources";
-import { stayExpenses, stayGuests, stayRoomTypes, stayRooms } from "@/shared/resources";
+import { stayGuests, stayRoomTypes, stayRooms } from "@/shared/resources";
 import { route, type Ctx } from "../http/router";
 import { registerCrud } from "../http/crud";
 import { badRequest, conflict, forbidden, HttpError, notFound } from "../http/errors";
@@ -27,7 +27,7 @@ registerCrud(stayRooms, {
   model: "stayRoom", include: { roomType: { select: { name: true, baseRate: true } } }, orderBy: [{ floor: "asc" }, { number: "asc" }],
 });
 registerCrud(stayGuests, { model: "stayGuest", orderBy: { createdAt: "desc" } });
-registerCrud(stayExpenses, { model: "stayExpense", orderBy: { expenseDate: "desc" } });
+// Expenses: routes/daybook.ts (shared by every product).
 
 // ---------------------------------------------------------------------------
 // Helpers
