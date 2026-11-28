@@ -6,6 +6,7 @@ import { isPrivateKey, storage } from "../core/storage";
 import { verifyFileUrl } from "../core/keys";
 import { runRenewalJob } from "../core/subscriptions";
 import { runDailyReportJob } from "../core/daily-report";
+import { runPayablesAlertJob } from "../core/payables-alerts";
 import { writeAudit } from "../core/audit";
 import { buildOpenApi } from "../openapi";
 
@@ -83,12 +84,16 @@ route({
  * gets that business day's PDF on WhatsApp, once. Call it every 15 minutes
  * (docker `cron` service, or the GitHub Actions schedule in
  * .github/workflows/daily-reports.yml when hosted on Vercel Hobby).
+ * The same schedule runs the supplier credit end-of-day check (overdue bills,
+ * limits, summaries): also once per business day, after closing time.
  */
 async function dailyReportJob(ctx: { req: Request }) {
   assertCronSecret(ctx.req);
   const result = await runDailyReportJob();
   if (result.due) await withPlatform((db) => writeAudit(db, { action: "jobs.daily_reports", meta: result }));
-  return result;
+  const supplierCredit = await runPayablesAlertJob();
+  if (supplierCredit.due) await withPlatform((db) => writeAudit(db, { action: "jobs.supplier_credit_alerts", meta: supplierCredit }));
+  return { ...result, supplierCredit };
 }
 
 route({

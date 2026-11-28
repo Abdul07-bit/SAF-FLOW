@@ -15,6 +15,7 @@ const MUTED = rgb(0.42, 0.46, 0.52);
 const LINE = rgb(0.86, 0.88, 0.9);
 const BRAND = rgb(0.004, 0.498, 0.486);
 const BAD = rgb(0.75, 0.15, 0.15);
+export const PDF_COLORS = { INK, MUTED, LINE, BRAND, BAD };
 
 /** Standard PDF fonts only cover WinAnsi (no rupee sign). */
 function safe(s: string | null | undefined): string {
@@ -31,7 +32,8 @@ export function pdfMoney(paise: number): string {
 
 interface Col { label: string; width: number; align?: "right" }
 
-class Writer {
+/** A4 writer shared by SAF Flow's PDF reports: header band, key-figure boxes, headings, tables. */
+export class PdfWriter {
   doc!: PDFDocument;
   page!: PDFPage;
   font!: PDFFont;
@@ -40,7 +42,7 @@ class Writer {
   footer = "";
 
   static async create(footer: string) {
-    const w = new Writer();
+    const w = new PdfWriter();
     w.doc = await PDFDocument.create();
     w.font = await w.doc.embedFont(StandardFonts.Helvetica);
     w.bold = await w.doc.embedFont(StandardFonts.HelveticaBold);
@@ -70,6 +72,27 @@ class Writer {
     const size = o.size ?? 10;
     const font = o.bold ? this.bold : this.font;
     this.page.drawText(this.fit(t, font, size, o.max ?? W - 2 * M), { x: o.x ?? M, y: this.y, size, font, color: o.color ?? INK });
+  }
+
+  /** Brand-coloured header band at the top of the first page. */
+  band(title: string, subtitle: string, small: string) {
+    this.page.drawRectangle({ x: 0, y: H - 92, width: W, height: 92, color: BRAND });
+    this.page.drawText(this.fit(title, this.bold, 18, W - 2 * M), { x: M, y: H - 42, size: 18, font: this.bold, color: rgb(1, 1, 1) });
+    this.page.drawText(safe(subtitle), { x: M, y: H - 62, size: 11, font: this.font, color: rgb(1, 1, 1) });
+    this.page.drawText(safe(small), { x: M, y: H - 78, size: 8.5, font: this.font, color: rgb(0.9, 0.97, 0.97) });
+    this.y = H - 120;
+  }
+
+  /** Four key figures in boxes. */
+  kpis(items: [string, string, ReturnType<typeof rgb>?][]) {
+    const boxW = (W - 2 * M - 3 * 10) / 4;
+    items.forEach(([label, value, color], i) => {
+      const x = M + i * (boxW + 10);
+      this.page.drawRectangle({ x, y: this.y - 44, width: boxW, height: 52, borderColor: LINE, borderWidth: 0.8 });
+      this.page.drawText(safe(label), { x: x + 8, y: this.y - 6, size: 8.5, font: this.font, color: MUTED });
+      this.page.drawText(this.fit(value, this.bold, 13, boxW - 14), { x: x + 8, y: this.y - 30, size: 13, font: this.bold, color: color ?? INK });
+    });
+    this.y -= 62;
   }
 
   heading(t: string) {
@@ -107,31 +130,20 @@ class Writer {
 export async function dayBookPdf(book: DayBook, meta: { businessName: string; productName: string; branchName?: string | null; generatedAt?: Date }): Promise<Uint8Array> {
   const single = book.from === book.to;
   const period = single ? fmtDate(book.from) : `${fmtDate(book.from)} to ${fmtDate(book.to)}`;
-  const w = await Writer.create(`${meta.productName} - generated ${fmtDateTime(meta.generatedAt ?? new Date())} IST by SAF Flow`);
+  const w = await PdfWriter.create(`${meta.productName} - generated ${fmtDateTime(meta.generatedAt ?? new Date())} IST by SAF Flow`);
   const t = book.totals;
 
-  // Header band
-  w.page.drawRectangle({ x: 0, y: H - 92, width: W, height: 92, color: BRAND });
-  w.page.drawText(w.fit(meta.businessName, w.bold, 18, W - 2 * M), { x: M, y: H - 42, size: 18, font: w.bold, color: rgb(1, 1, 1) });
-  w.page.drawText(safe(`${single ? "Daily closing report" : "Sales & expenses report"} - ${period}`), { x: M, y: H - 62, size: 11, font: w.font, color: rgb(1, 1, 1) });
-  w.page.drawText(safe(`${meta.productName}${meta.branchName ? ` - ${meta.branchName}` : ""}  |  Business hours ${book.hours.openingTime} - ${book.hours.closingTime}`), { x: M, y: H - 78, size: 8.5, font: w.font, color: rgb(0.9, 0.97, 0.97) });
-  w.y = H - 120;
-
-  // Key figures
-  const kpis: [string, string, ReturnType<typeof rgb>?][] = [
+  w.band(
+    meta.businessName,
+    `${single ? "Daily closing report" : "Sales & expenses report"} - ${period}`,
+    `${meta.productName}${meta.branchName ? ` - ${meta.branchName}` : ""}  |  Business hours ${book.hours.openingTime} - ${book.hours.closingTime}`,
+  );
+  w.kpis([
     [book.product === "stay" ? "Payments received" : "Total sales", pdfMoney(t.sales)],
     [book.countLabel, String(t.count)],
     ["Expenses", pdfMoney(t.expenses)],
     ["Sales less expenses", pdfMoney(t.net), t.net < 0 ? BAD : undefined],
-  ];
-  const boxW = (W - 2 * M - 3 * 10) / 4;
-  kpis.forEach(([label, value, color], i) => {
-    const x = M + i * (boxW + 10);
-    w.page.drawRectangle({ x, y: w.y - 44, width: boxW, height: 52, borderColor: LINE, borderWidth: 0.8 });
-    w.page.drawText(safe(label), { x: x + 8, y: w.y - 6, size: 8.5, font: w.font, color: MUTED });
-    w.page.drawText(w.fit(value, w.bold, 13, boxW - 14), { x: x + 8, y: w.y - 30, size: 13, font: w.bold, color: color ?? INK });
-  });
-  w.y -= 62;
+  ]);
   const extra = [
     book.product !== "stay" && t.count ? `Average ${book.product === "dine" ? "order" : "bill"} ${pdfMoney(t.avgTicket)}` : "",
     t.discount ? `Discounts ${pdfMoney(t.discount)}` : "",

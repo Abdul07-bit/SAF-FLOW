@@ -571,6 +571,11 @@ export function errorResponse(err: unknown, headers?: Headers): Response {
     return json(400, { error: { code: "INVALID_REFERENCE", message: "A selected record does not exist." } }, headers);
   if (msg.includes("SAF_AUDIT_IMMUTABLE"))
     return json(403, { error: { code: "AUDIT_IMMUTABLE", message: "Audit records cannot be changed." } }, headers);
+  // Supplier credit guards (supplier_credit migration).
+  if (msg.includes("SAF_PAYABLES_IMMUTABLE"))
+    return json(409, { error: { code: "RECORD_LOCKED", message: "Saved financial records cannot be changed. Cancel or reverse it instead." } }, headers);
+  if (msg.includes("SAF_ALLOCATION_INVALID"))
+    return json(409, { error: { code: "BALANCE_CHANGED", message: "The supplier's balance changed while saving. Please reload and try again." } }, headers);
   if (msg.includes("stay_reservations_no_overlap"))
     return json(409, { error: { code: "ROOM_ALREADY_BOOKED", message: "The room is already booked for some of these dates." } }, headers);
   // Full details (stack included, personal data masked) go to the server log under the

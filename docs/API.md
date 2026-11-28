@@ -23,7 +23,7 @@ Each endpoint declares exactly one policy, enforced by the router before the han
 - **Tenant user of a product** - checks, in order: business active, product subscribed, subscription usable,
   the user has a role in that product, the plan (or a per-business override) includes the feature, the role grants the permission.
 
-344 endpoints.
+369 endpoints.
 
 ## Authentication & session
 
@@ -543,3 +543,33 @@ Each endpoint declares exactly one policy, enforced by the router before the han
 | GET | `/api/stay/rooms/:id` | Get one room | Tenant user of stay with a usable subscription; plan feature: rooms or housekeeping_status or front_desk or availability or reservations or maintenance; role permission: rooms.view or housekeeping.view or frontdesk.view. |
 | PATCH | `/api/stay/rooms/:id` | Update room | Tenant user of stay with a usable subscription; plan feature: rooms; role permission: rooms.manage. |
 | POST | `/api/stay/rooms/:id/restore` | Reactivate room | Tenant user of stay with a usable subscription; plan feature: rooms; role permission: rooms.manage. |
+
+## supplier-credit
+
+| Method | Path | Summary | Authorization |
+|---|---|---|---|
+| GET | `/api/dine/payables/adjustments` | Returns, discounts, corrections and write-offs | Tenant user of dine with a usable subscription; plan feature: supplier_credit; role permission: payables.view. |
+| POST | `/api/dine/payables/adjustments` | Adjust what is owed: DECREASE for returns, discounts, corrections, write-offs; INCREASE for charges or under-recorded amounts. A reason is required. | Tenant user of dine with a usable subscription; plan feature: supplier_credit; role permission: payables.adjust. |
+| POST | `/api/dine/payables/adjustments/:id/reverse` | Reverse an adjustment (kept in the ledger) | Tenant user of dine with a usable subscription; plan feature: supplier_credit; role permission: payables.adjust. |
+| GET | `/api/dine/payables/alerts` | What needs attention now (overdue bills, suppliers over their limit, long-unpaid balances) and the alert history | Tenant user of dine with a usable subscription; plan feature: supplier_credit; role permission: payables.view. |
+| GET | `/api/dine/payables/payments` | Payments to suppliers: filter by supplier, dates and status | Tenant user of dine with a usable subscription; plan feature: supplier_credit; role permission: payables.view. |
+| POST | `/api/dine/payables/payments` | Pay a supplier. Settles the bills named first, then the oldest open bills. More than the balance only with allowAdvance. Repeating the same clientRef returns the first payment. | Tenant user of dine with a usable subscription; plan feature: supplier_credit; role permission: payables.manage. |
+| POST | `/api/dine/payables/payments/:id/attachment` | Attach a payment receipt or screenshot (PNG/JPEG, max 2 MB) | Tenant user of dine with a usable subscription; plan feature: supplier_credit; role permission: payables.manage. |
+| POST | `/api/dine/payables/payments/:id/reverse` | Reverse a payment entered by mistake: the bills it settled are owed again (kept in the ledger) | Tenant user of dine with a usable subscription; plan feature: supplier_credit; role permission: payables.adjust. |
+| GET | `/api/dine/payables/purchases` | Credit purchases with what is still owed: filter by supplier, status, dates, search | Tenant user of dine with a usable subscription; plan feature: supplier_credit; role permission: payables.view. |
+| POST | `/api/dine/payables/purchases` | Record a purchase: fully paid, partly paid or on credit. Total = quantity x rate per line. Repeating the same clientRef returns the first purchase. | Tenant user of dine with a usable subscription; plan feature: supplier_credit; role permission: payables.manage. |
+| GET | `/api/dine/payables/purchases/:id` | One purchase with its lines, how it was settled, and the bill photo | Tenant user of dine with a usable subscription; plan feature: supplier_credit; role permission: payables.view. |
+| PATCH | `/api/dine/payables/purchases/:id` | Edit a purchase's invoice number, due date or notes (amounts are corrected by cancelling or adjusting) | Tenant user of dine with a usable subscription; plan feature: supplier_credit; role permission: payables.manage. |
+| POST | `/api/dine/payables/purchases/:id/attachment` | Attach a photo of the supplier's bill (PNG/JPEG, max 2 MB) | Tenant user of dine with a usable subscription; plan feature: supplier_credit; role permission: payables.manage. |
+| POST | `/api/dine/payables/purchases/:id/cancel` | Cancel a purchase entered by mistake (kept in the ledger as a reversal). Optionally reverse the payment made with it. | Tenant user of dine with a usable subscription; plan feature: supplier_credit; role permission: payables.adjust. |
+| GET | `/api/dine/payables/reports` | Supplier credit report for a day, week (Mon-Sun), month or custom range, with the previous period for comparison | Tenant user of dine with a usable subscription; plan feature: supplier_credit; role permission: payables.view. |
+| GET | `/api/dine/payables/reports/csv` | Supplier credit report as CSV (opens in Excel) | Tenant user of dine with a usable subscription; plan feature: supplier_credit; role permission: payables.view. |
+| GET | `/api/dine/payables/reports/pdf` | Supplier credit report as a PDF | Tenant user of dine with a usable subscription; plan feature: supplier_credit; role permission: payables.view. |
+| GET | `/api/dine/payables/settings` | Supplier credit alert settings, and whether WhatsApp alerts can be delivered | Tenant user of dine with a usable subscription; plan feature: supplier_credit; role permission: payables.view. |
+| PUT | `/api/dine/payables/settings` | Change supplier credit alerts, limits, summaries and the stock purchase link | Tenant user of dine with a usable subscription; plan feature: supplier_credit; role permission: payables.adjust. |
+| GET | `/api/dine/payables/summary` | Supplier credit dashboard: totals, overdue, this month's purchases and payments, and every supplier's balance | Tenant user of dine with a usable subscription; plan feature: supplier_credit; role permission: payables.view. |
+| GET | `/api/dine/payables/suppliers` | Suppliers with balances: search, filter, sort and pages | Tenant user of dine with a usable subscription; plan feature: supplier_credit; role permission: payables.view. |
+| POST | `/api/dine/payables/suppliers` | Add a supplier (optionally with the balance already owed to them) | Tenant user of dine with a usable subscription; plan feature: supplier_credit; role permission: payables.manage. |
+| GET | `/api/dine/payables/suppliers/:id` | Supplier account: profile, balance, open bills and recent payments | Tenant user of dine with a usable subscription; plan feature: supplier_credit; role permission: payables.view. |
+| PATCH | `/api/dine/payables/suppliers/:id` | Edit a supplier's profile, or deactivate / reactivate it (the balance is never edited here) | Tenant user of dine with a usable subscription; plan feature: supplier_credit; role permission: payables.manage. |
+| GET | `/api/dine/payables/suppliers/:id/ledger` | Supplier ledger with running balance (format=csv to download) | Tenant user of dine with a usable subscription; plan feature: supplier_credit; role permission: payables.view. |

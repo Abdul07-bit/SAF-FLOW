@@ -16018,6 +16018,2309 @@
         }
       }
     },
+    "/api/dine/payables/adjustments": {
+      "get": {
+        "summary": "Returns, discounts, corrections and write-offs",
+        "description": "**Authorization:** Tenant user of dine with a usable subscription; plan feature: supplier_credit; role permission: payables.view.",
+        "tags": [
+          "supplier-credit"
+        ],
+        "parameters": [
+          {
+            "name": "supplierId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 10000
+            }
+          },
+          {
+            "name": "pageSize",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "default": 25,
+              "type": "integer",
+              "minimum": 5,
+              "maximum": 100
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "402": {
+            "description": "Subscription expired"
+          },
+          "403": {
+            "description": "Not permitted (plan feature, role permission, tenant suspended...)"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        },
+        "x-saf-auth": {
+          "product": "dine",
+          "feature": "supplier_credit",
+          "permission": "payables.view"
+        }
+      },
+      "post": {
+        "summary": "Adjust what is owed: DECREASE for returns, discounts, corrections, write-offs; INCREASE for charges or under-recorded amounts. A reason is required.",
+        "description": "**Authorization:** Tenant user of dine with a usable subscription; plan feature: supplier_credit; role permission: payables.adjust.\n\nMutations require header `x-saf-request: 1` (CSRF guard).",
+        "tags": [
+          "supplier-credit"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "402": {
+            "description": "Subscription expired"
+          },
+          "403": {
+            "description": "Not permitted (plan feature, role permission, tenant suspended...)"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        },
+        "x-saf-auth": {
+          "product": "dine",
+          "feature": "supplier_credit",
+          "permission": "payables.adjust"
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "supplierId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  "direction": {
+                    "type": "string",
+                    "enum": [
+                      "INCREASE",
+                      "DECREASE"
+                    ]
+                  },
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "RETURN",
+                      "DISCOUNT",
+                      "CORRECTION",
+                      "WRITE_OFF",
+                      "OTHER"
+                    ]
+                  },
+                  "amount": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 1000000000
+                  },
+                  "adjustmentDate": {
+                    "type": "string"
+                  },
+                  "purchaseId": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "reason": {
+                    "type": "string",
+                    "minLength": 3,
+                    "maxLength": 300
+                  },
+                  "allowAdvance": {
+                    "type": "boolean"
+                  },
+                  "clientRef": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "supplierId",
+                  "direction",
+                  "kind",
+                  "amount",
+                  "reason"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/dine/payables/adjustments/{id}/reverse": {
+      "post": {
+        "summary": "Reverse an adjustment (kept in the ledger)",
+        "description": "**Authorization:** Tenant user of dine with a usable subscription; plan feature: supplier_credit; role permission: payables.adjust.\n\nMutations require header `x-saf-request: 1` (CSRF guard).",
+        "tags": [
+          "supplier-credit"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "402": {
+            "description": "Subscription expired"
+          },
+          "403": {
+            "description": "Not permitted (plan feature, role permission, tenant suspended...)"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        },
+        "x-saf-auth": {
+          "product": "dine",
+          "feature": "supplier_credit",
+          "permission": "payables.adjust"
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "reason": {
+                    "type": "string",
+                    "minLength": 3,
+                    "maxLength": 300
+                  }
+                },
+                "required": [
+                  "reason"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/dine/payables/alerts": {
+      "get": {
+        "summary": "What needs attention now (overdue bills, suppliers over their limit, long-unpaid balances) and the alert history",
+        "description": "**Authorization:** Tenant user of dine with a usable subscription; plan feature: supplier_credit; role permission: payables.view.",
+        "tags": [
+          "supplier-credit"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "402": {
+            "description": "Subscription expired"
+          },
+          "403": {
+            "description": "Not permitted (plan feature, role permission, tenant suspended...)"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        },
+        "x-saf-auth": {
+          "product": "dine",
+          "feature": "supplier_credit",
+          "permission": "payables.view"
+        }
+      }
+    },
+    "/api/dine/payables/payments": {
+      "get": {
+        "summary": "Payments to suppliers: filter by supplier, dates and status",
+        "description": "**Authorization:** Tenant user of dine with a usable subscription; plan feature: supplier_credit; role permission: payables.view.",
+        "tags": [
+          "supplier-credit"
+        ],
+        "parameters": [
+          {
+            "name": "supplierId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            }
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "ACTIVE",
+                "REVERSED"
+              ]
+            }
+          },
+          {
+            "name": "method",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "CASH",
+                "UPI",
+                "BANK_TRANSFER",
+                "OTHER"
+              ]
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 100
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 10000
+            }
+          },
+          {
+            "name": "pageSize",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "default": 25,
+              "type": "integer",
+              "minimum": 5,
+              "maximum": 100
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "402": {
+            "description": "Subscription expired"
+          },
+          "403": {
+            "description": "Not permitted (plan feature, role permission, tenant suspended...)"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        },
+        "x-saf-auth": {
+          "product": "dine",
+          "feature": "supplier_credit",
+          "permission": "payables.view"
+        }
+      },
+      "post": {
+        "summary": "Pay a supplier. Settles the bills named first, then the oldest open bills. More than the balance only with allowAdvance. Repeating the same clientRef returns the first payment.",
+        "description": "**Authorization:** Tenant user of dine with a usable subscription; plan feature: supplier_credit; role permission: payables.manage.\n\nMutations require header `x-saf-request: 1` (CSRF guard).",
+        "tags": [
+          "supplier-credit"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "402": {
+            "description": "Subscription expired"
+          },
+          "403": {
+            "description": "Not permitted (plan feature, role permission, tenant suspended...)"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        },
+        "x-saf-auth": {
+          "product": "dine",
+          "feature": "supplier_credit",
+          "permission": "payables.manage"
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "supplierId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  "paymentDate": {
+                    "type": "string"
+                  },
+                  "amount": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 1000000000
+                  },
+                  "method": {
+                    "type": "string",
+                    "enum": [
+                      "CASH",
+                      "UPI",
+                      "BANK_TRANSFER",
+                      "OTHER"
+                    ]
+                  },
+                  "reference": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 100
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "notes": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 500
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "allocations": {
+                    "maxItems": 100,
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "purchaseId": {
+                          "type": "string",
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                        },
+                        "amount": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 1000000000
+                        }
+                      },
+                      "required": [
+                        "purchaseId",
+                        "amount"
+                      ]
+                    }
+                  },
+                  "allowAdvance": {
+                    "type": "boolean"
+                  },
+                  "clientRef": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "supplierId",
+                  "amount",
+                  "method"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/dine/payables/payments/{id}/attachment": {
+      "post": {
+        "summary": "Attach a payment receipt or screenshot (PNG/JPEG, max 2 MB)",
+        "description": "**Authorization:** Tenant user of dine with a usable subscription; plan feature: supplier_credit; role permission: payables.manage.\n\nMutations require header `x-saf-request: 1` (CSRF guard).",
+        "tags": [
+          "supplier-credit"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "402": {
+            "description": "Subscription expired"
+          },
+          "403": {
+            "description": "Not permitted (plan feature, role permission, tenant suspended...)"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        },
+        "x-saf-auth": {
+          "product": "dine",
+          "feature": "supplier_credit",
+          "permission": "payables.manage"
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "file": {
+                    "type": "string",
+                    "format": "binary"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/dine/payables/payments/{id}/reverse": {
+      "post": {
+        "summary": "Reverse a payment entered by mistake: the bills it settled are owed again (kept in the ledger)",
+        "description": "**Authorization:** Tenant user of dine with a usable subscription; plan feature: supplier_credit; role permission: payables.adjust.\n\nMutations require header `x-saf-request: 1` (CSRF guard).",
+        "tags": [
+          "supplier-credit"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "402": {
+            "description": "Subscription expired"
+          },
+          "403": {
+            "description": "Not permitted (plan feature, role permission, tenant suspended...)"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        },
+        "x-saf-auth": {
+          "product": "dine",
+          "feature": "supplier_credit",
+          "permission": "payables.adjust"
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "reason": {
+                    "type": "string",
+                    "minLength": 3,
+                    "maxLength": 300
+                  }
+                },
+                "required": [
+                  "reason"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/dine/payables/purchases": {
+      "get": {
+        "summary": "Credit purchases with what is still owed: filter by supplier, status, dates, search",
+        "description": "**Authorization:** Tenant user of dine with a usable subscription; plan feature: supplier_credit; role permission: payables.view.",
+        "tags": [
+          "supplier-credit"
+        ],
+        "parameters": [
+          {
+            "name": "supplierId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "OPEN",
+                "PAID",
+                "PARTIALLY_PAID",
+                "UNPAID",
+                "OVERDUE",
+                "CANCELLED"
+              ]
+            }
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 100
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 10000
+            }
+          },
+          {
+            "name": "pageSize",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "default": 25,
+              "type": "integer",
+              "minimum": 5,
+              "maximum": 100
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "402": {
+            "description": "Subscription expired"
+          },
+          "403": {
+            "description": "Not permitted (plan feature, role permission, tenant suspended...)"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        },
+        "x-saf-auth": {
+          "product": "dine",
+          "feature": "supplier_credit",
+          "permission": "payables.view"
+        }
+      },
+      "post": {
+        "summary": "Record a purchase: fully paid, partly paid or on credit. Total = quantity x rate per line. Repeating the same clientRef returns the first purchase.",
+        "description": "**Authorization:** Tenant user of dine with a usable subscription; plan feature: supplier_credit; role permission: payables.manage.\n\nMutations require header `x-saf-request: 1` (CSRF guard).",
+        "tags": [
+          "supplier-credit"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "402": {
+            "description": "Subscription expired"
+          },
+          "403": {
+            "description": "Not permitted (plan feature, role permission, tenant suspended...)"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        },
+        "x-saf-auth": {
+          "product": "dine",
+          "feature": "supplier_credit",
+          "permission": "payables.manage"
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "supplierId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  "billDate": {
+                    "type": "string"
+                  },
+                  "dueDate": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "invoiceNo": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 60
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "notes": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 500
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "items": {
+                    "minItems": 1,
+                    "maxItems": 50,
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "productName": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 100
+                        },
+                        "category": {
+                          "type": "string",
+                          "enum": [
+                            "CHICKEN",
+                            "MEAT",
+                            "VEGETABLES",
+                            "GROCERIES",
+                            "DAIRY",
+                            "BEVERAGES",
+                            "OTHER"
+                          ]
+                        },
+                        "quantity": {
+                          "anyOf": [
+                            {
+                              "type": "number",
+                              "exclusiveMinimum": 0
+                            },
+                            {
+                              "type": "string",
+                              "minLength": 1
+                            }
+                          ]
+                        },
+                        "unit": {
+                          "type": "string",
+                          "enum": [
+                            "KG",
+                            "GRAM",
+                            "LITRE",
+                            "PIECE",
+                            "BOX",
+                            "PACKET",
+                            "OTHER"
+                          ]
+                        },
+                        "rate": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 1000000000
+                        },
+                        "stockItemId": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "format": "uuid",
+                              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        }
+                      },
+                      "required": [
+                        "productName",
+                        "quantity",
+                        "unit",
+                        "rate"
+                      ]
+                    }
+                  },
+                  "amountPaid": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 1000000000
+                  },
+                  "paymentMethod": {
+                    "type": "string",
+                    "enum": [
+                      "CASH",
+                      "UPI",
+                      "BANK_TRANSFER",
+                      "OTHER"
+                    ]
+                  },
+                  "paymentReference": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 100
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "clientRef": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "supplierId",
+                  "items"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/dine/payables/purchases/{id}": {
+      "get": {
+        "summary": "One purchase with its lines, how it was settled, and the bill photo",
+        "description": "**Authorization:** Tenant user of dine with a usable subscription; plan feature: supplier_credit; role permission: payables.view.",
+        "tags": [
+          "supplier-credit"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "402": {
+            "description": "Subscription expired"
+          },
+          "403": {
+            "description": "Not permitted (plan feature, role permission, tenant suspended...)"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        },
+        "x-saf-auth": {
+          "product": "dine",
+          "feature": "supplier_credit",
+          "permission": "payables.view"
+        }
+      },
+      "patch": {
+        "summary": "Edit a purchase's invoice number, due date or notes (amounts are corrected by cancelling or adjusting)",
+        "description": "**Authorization:** Tenant user of dine with a usable subscription; plan feature: supplier_credit; role permission: payables.manage.\n\nMutations require header `x-saf-request: 1` (CSRF guard).",
+        "tags": [
+          "supplier-credit"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "402": {
+            "description": "Subscription expired"
+          },
+          "403": {
+            "description": "Not permitted (plan feature, role permission, tenant suspended...)"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        },
+        "x-saf-auth": {
+          "product": "dine",
+          "feature": "supplier_credit",
+          "permission": "payables.manage"
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "invoiceNo": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 60
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "dueDate": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "notes": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 500
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/dine/payables/purchases/{id}/attachment": {
+      "post": {
+        "summary": "Attach a photo of the supplier's bill (PNG/JPEG, max 2 MB)",
+        "description": "**Authorization:** Tenant user of dine with a usable subscription; plan feature: supplier_credit; role permission: payables.manage.\n\nMutations require header `x-saf-request: 1` (CSRF guard).",
+        "tags": [
+          "supplier-credit"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "402": {
+            "description": "Subscription expired"
+          },
+          "403": {
+            "description": "Not permitted (plan feature, role permission, tenant suspended...)"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        },
+        "x-saf-auth": {
+          "product": "dine",
+          "feature": "supplier_credit",
+          "permission": "payables.manage"
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "file": {
+                    "type": "string",
+                    "format": "binary"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/dine/payables/purchases/{id}/cancel": {
+      "post": {
+        "summary": "Cancel a purchase entered by mistake (kept in the ledger as a reversal). Optionally reverse the payment made with it.",
+        "description": "**Authorization:** Tenant user of dine with a usable subscription; plan feature: supplier_credit; role permission: payables.adjust.\n\nMutations require header `x-saf-request: 1` (CSRF guard).",
+        "tags": [
+          "supplier-credit"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "402": {
+            "description": "Subscription expired"
+          },
+          "403": {
+            "description": "Not permitted (plan feature, role permission, tenant suspended...)"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        },
+        "x-saf-auth": {
+          "product": "dine",
+          "feature": "supplier_credit",
+          "permission": "payables.adjust"
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "reason": {
+                    "type": "string",
+                    "minLength": 3,
+                    "maxLength": 300
+                  },
+                  "reversePayments": {
+                    "default": false,
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "reason"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/dine/payables/reports": {
+      "get": {
+        "summary": "Supplier credit report for a day, week (Mon-Sun), month or custom range, with the previous period for comparison",
+        "description": "**Authorization:** Tenant user of dine with a usable subscription; plan feature: supplier_credit; role permission: payables.view.",
+        "tags": [
+          "supplier-credit"
+        ],
+        "parameters": [
+          {
+            "name": "period",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "default": "day",
+              "type": "string",
+              "enum": [
+                "day",
+                "week",
+                "month",
+                "custom"
+              ]
+            }
+          },
+          {
+            "name": "date",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "402": {
+            "description": "Subscription expired"
+          },
+          "403": {
+            "description": "Not permitted (plan feature, role permission, tenant suspended...)"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        },
+        "x-saf-auth": {
+          "product": "dine",
+          "feature": "supplier_credit",
+          "permission": "payables.view"
+        }
+      }
+    },
+    "/api/dine/payables/reports/csv": {
+      "get": {
+        "summary": "Supplier credit report as CSV (opens in Excel)",
+        "description": "**Authorization:** Tenant user of dine with a usable subscription; plan feature: supplier_credit; role permission: payables.view.",
+        "tags": [
+          "supplier-credit"
+        ],
+        "parameters": [
+          {
+            "name": "period",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "default": "day",
+              "type": "string",
+              "enum": [
+                "day",
+                "week",
+                "month",
+                "custom"
+              ]
+            }
+          },
+          {
+            "name": "date",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "402": {
+            "description": "Subscription expired"
+          },
+          "403": {
+            "description": "Not permitted (plan feature, role permission, tenant suspended...)"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        },
+        "x-saf-auth": {
+          "product": "dine",
+          "feature": "supplier_credit",
+          "permission": "payables.view"
+        }
+      }
+    },
+    "/api/dine/payables/reports/pdf": {
+      "get": {
+        "summary": "Supplier credit report as a PDF",
+        "description": "**Authorization:** Tenant user of dine with a usable subscription; plan feature: supplier_credit; role permission: payables.view.",
+        "tags": [
+          "supplier-credit"
+        ],
+        "parameters": [
+          {
+            "name": "period",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "default": "day",
+              "type": "string",
+              "enum": [
+                "day",
+                "week",
+                "month",
+                "custom"
+              ]
+            }
+          },
+          {
+            "name": "date",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "402": {
+            "description": "Subscription expired"
+          },
+          "403": {
+            "description": "Not permitted (plan feature, role permission, tenant suspended...)"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        },
+        "x-saf-auth": {
+          "product": "dine",
+          "feature": "supplier_credit",
+          "permission": "payables.view"
+        }
+      }
+    },
+    "/api/dine/payables/settings": {
+      "get": {
+        "summary": "Supplier credit alert settings, and whether WhatsApp alerts can be delivered",
+        "description": "**Authorization:** Tenant user of dine with a usable subscription; plan feature: supplier_credit; role permission: payables.view.",
+        "tags": [
+          "supplier-credit"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "402": {
+            "description": "Subscription expired"
+          },
+          "403": {
+            "description": "Not permitted (plan feature, role permission, tenant suspended...)"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        },
+        "x-saf-auth": {
+          "product": "dine",
+          "feature": "supplier_credit",
+          "permission": "payables.view"
+        }
+      },
+      "put": {
+        "summary": "Change supplier credit alerts, limits, summaries and the stock purchase link",
+        "description": "**Authorization:** Tenant user of dine with a usable subscription; plan feature: supplier_credit; role permission: payables.adjust.\n\nMutations require header `x-saf-request: 1` (CSRF guard).",
+        "tags": [
+          "supplier-credit"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "402": {
+            "description": "Subscription expired"
+          },
+          "403": {
+            "description": "Not permitted (plan feature, role permission, tenant suspended...)"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        },
+        "x-saf-auth": {
+          "product": "dine",
+          "feature": "supplier_credit",
+          "permission": "payables.adjust"
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "notifyPurchases": {
+                    "type": "boolean"
+                  },
+                  "notifyPayments": {
+                    "type": "boolean"
+                  },
+                  "notifyOverdue": {
+                    "type": "boolean"
+                  },
+                  "totalCreditLimit": {
+                    "anyOf": [
+                      {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 1000000000
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "agingDays": {
+                    "anyOf": [
+                      {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 365
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "dailySummary": {
+                    "type": "boolean"
+                  },
+                  "weeklySummary": {
+                    "type": "boolean"
+                  },
+                  "monthlySummary": {
+                    "type": "boolean"
+                  },
+                  "whatsappEnabled": {
+                    "type": "boolean"
+                  },
+                  "whatsappNumber": {
+                    "anyOf": [
+                      {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "const": ""
+                          },
+                          {
+                            "type": "string",
+                            "pattern": "^[+\\d][\\d\\s-]{6,18}$"
+                          }
+                        ]
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "linkStockPurchases": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/dine/payables/summary": {
+      "get": {
+        "summary": "Supplier credit dashboard: totals, overdue, this month's purchases and payments, and every supplier's balance",
+        "description": "**Authorization:** Tenant user of dine with a usable subscription; plan feature: supplier_credit; role permission: payables.view.",
+        "tags": [
+          "supplier-credit"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "402": {
+            "description": "Subscription expired"
+          },
+          "403": {
+            "description": "Not permitted (plan feature, role permission, tenant suspended...)"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        },
+        "x-saf-auth": {
+          "product": "dine",
+          "feature": "supplier_credit",
+          "permission": "payables.view"
+        }
+      }
+    },
+    "/api/dine/payables/suppliers": {
+      "get": {
+        "summary": "Suppliers with balances: search, filter, sort and pages",
+        "description": "**Authorization:** Tenant user of dine with a usable subscription; plan feature: supplier_credit; role permission: payables.view.",
+        "tags": [
+          "supplier-credit"
+        ],
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 100
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "default": "active",
+              "type": "string",
+              "enum": [
+                "all",
+                "active",
+                "inactive",
+                "owed",
+                "overdue",
+                "advance"
+              ]
+            }
+          },
+          {
+            "name": "category",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "CHICKEN",
+                "MEAT",
+                "VEGETABLES",
+                "GROCERIES",
+                "DAIRY",
+                "BEVERAGES",
+                "OTHER"
+              ]
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "default": "name",
+              "type": "string",
+              "enum": [
+                "name",
+                "balance",
+                "overdue",
+                "purchases",
+                "activity"
+              ]
+            }
+          },
+          {
+            "name": "dir",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "asc",
+                "desc"
+              ]
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 10000
+            }
+          },
+          {
+            "name": "pageSize",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "default": 25,
+              "type": "integer",
+              "minimum": 5,
+              "maximum": 100
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "402": {
+            "description": "Subscription expired"
+          },
+          "403": {
+            "description": "Not permitted (plan feature, role permission, tenant suspended...)"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        },
+        "x-saf-auth": {
+          "product": "dine",
+          "feature": "supplier_credit",
+          "permission": "payables.view"
+        }
+      },
+      "post": {
+        "summary": "Add a supplier (optionally with the balance already owed to them)",
+        "description": "**Authorization:** Tenant user of dine with a usable subscription; plan feature: supplier_credit; role permission: payables.manage.\n\nMutations require header `x-saf-request: 1` (CSRF guard).",
+        "tags": [
+          "supplier-credit"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "402": {
+            "description": "Subscription expired"
+          },
+          "403": {
+            "description": "Not permitted (plan feature, role permission, tenant suspended...)"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        },
+        "x-saf-auth": {
+          "product": "dine",
+          "feature": "supplier_credit",
+          "permission": "payables.manage"
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 2,
+                    "maxLength": 100
+                  },
+                  "businessName": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 120
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "contactPerson": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 80
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "phone": {
+                    "anyOf": [
+                      {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "const": ""
+                          },
+                          {
+                            "type": "string",
+                            "pattern": "^[+\\d][\\d\\s-]{6,18}$"
+                          }
+                        ]
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "whatsapp": {
+                    "anyOf": [
+                      {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "const": ""
+                          },
+                          {
+                            "type": "string",
+                            "pattern": "^[+\\d][\\d\\s-]{6,18}$"
+                          }
+                        ]
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "email": {
+                    "anyOf": [
+                      {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "const": ""
+                          },
+                          {
+                            "type": "string",
+                            "maxLength": 120,
+                            "format": "email",
+                            "pattern": "^(?:[A-Za-z0-9_'+\\-]+\\.)*[A-Za-z0-9_'+\\-]*[A-Za-z0-9_+-]@(?:[A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
+                          }
+                        ]
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "address": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 300
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "gstin": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 20
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "category": {
+                    "default": "OTHER",
+                    "type": "string",
+                    "enum": [
+                      "CHICKEN",
+                      "MEAT",
+                      "VEGETABLES",
+                      "GROCERIES",
+                      "DAIRY",
+                      "BEVERAGES",
+                      "OTHER"
+                    ]
+                  },
+                  "paymentTermsDays": {
+                    "anyOf": [
+                      {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 365
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "creditLimit": {
+                    "anyOf": [
+                      {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 1000000000
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "notes": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 500
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "openingBalance": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 1000000000
+                  },
+                  "openingBalanceDate": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "name"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/dine/payables/suppliers/{id}": {
+      "get": {
+        "summary": "Supplier account: profile, balance, open bills and recent payments",
+        "description": "**Authorization:** Tenant user of dine with a usable subscription; plan feature: supplier_credit; role permission: payables.view.",
+        "tags": [
+          "supplier-credit"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "402": {
+            "description": "Subscription expired"
+          },
+          "403": {
+            "description": "Not permitted (plan feature, role permission, tenant suspended...)"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        },
+        "x-saf-auth": {
+          "product": "dine",
+          "feature": "supplier_credit",
+          "permission": "payables.view"
+        }
+      },
+      "patch": {
+        "summary": "Edit a supplier's profile, or deactivate / reactivate it (the balance is never edited here)",
+        "description": "**Authorization:** Tenant user of dine with a usable subscription; plan feature: supplier_credit; role permission: payables.manage.\n\nMutations require header `x-saf-request: 1` (CSRF guard).",
+        "tags": [
+          "supplier-credit"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "402": {
+            "description": "Subscription expired"
+          },
+          "403": {
+            "description": "Not permitted (plan feature, role permission, tenant suspended...)"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        },
+        "x-saf-auth": {
+          "product": "dine",
+          "feature": "supplier_credit",
+          "permission": "payables.manage"
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 2,
+                    "maxLength": 100
+                  },
+                  "businessName": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 120
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "contactPerson": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 80
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "phone": {
+                    "anyOf": [
+                      {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "const": ""
+                          },
+                          {
+                            "type": "string",
+                            "pattern": "^[+\\d][\\d\\s-]{6,18}$"
+                          }
+                        ]
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "whatsapp": {
+                    "anyOf": [
+                      {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "const": ""
+                          },
+                          {
+                            "type": "string",
+                            "pattern": "^[+\\d][\\d\\s-]{6,18}$"
+                          }
+                        ]
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "email": {
+                    "anyOf": [
+                      {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "const": ""
+                          },
+                          {
+                            "type": "string",
+                            "maxLength": 120,
+                            "format": "email",
+                            "pattern": "^(?:[A-Za-z0-9_'+\\-]+\\.)*[A-Za-z0-9_'+\\-]*[A-Za-z0-9_+-]@(?:[A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
+                          }
+                        ]
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "address": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 300
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "gstin": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 20
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "category": {
+                    "default": "OTHER",
+                    "type": "string",
+                    "enum": [
+                      "CHICKEN",
+                      "MEAT",
+                      "VEGETABLES",
+                      "GROCERIES",
+                      "DAIRY",
+                      "BEVERAGES",
+                      "OTHER"
+                    ]
+                  },
+                  "paymentTermsDays": {
+                    "anyOf": [
+                      {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 365
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "creditLimit": {
+                    "anyOf": [
+                      {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 1000000000
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "notes": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 500
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "isActive": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/dine/payables/suppliers/{id}/ledger": {
+      "get": {
+        "summary": "Supplier ledger with running balance (format=csv to download)",
+        "description": "**Authorization:** Tenant user of dine with a usable subscription; plan feature: supplier_credit; role permission: payables.view.",
+        "tags": [
+          "supplier-credit"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "format",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "default": "json",
+              "type": "string",
+              "enum": [
+                "json",
+                "csv"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "402": {
+            "description": "Subscription expired"
+          },
+          "403": {
+            "description": "Not permitted (plan feature, role permission, tenant suspended...)"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        },
+        "x-saf-auth": {
+          "product": "dine",
+          "feature": "supplier_credit",
+          "permission": "payables.view"
+        }
+      }
+    },
     "/api/dine/payments/upi": {
       "get": {
         "summary": "The business's UPI QR for a bill amount (shown to the customer on the cashier screen)",

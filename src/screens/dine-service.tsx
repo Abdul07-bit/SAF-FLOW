@@ -14,6 +14,7 @@ import { newSplit, SplitPaymentEditor, splitParts, splitReady, type SplitRow } f
 import { describePayment } from "@/shared/tender";
 import { currentBusinessDate, formatDailyNo } from "@/lib/business-day";
 import { MobileBillBar } from "@/components/mobile-bill-bar";
+import { SupplierCreditWidget } from "./dine-payables";
 
 export const TENDERS = ["CASH", "UPI", "CARD", "WALLET", "CREDIT", "OTHER"] as const;
 /** Tenders for a sale or bill: the above plus "SPLIT" (e.g. Rs 400 UPI + Rs 300 cash). Not for stay payments. */
@@ -66,6 +67,7 @@ export function DineDashboard() {
                 )}
               </Card>
             </div>
+            <SupplierCreditWidget className="mt-4" />
           </>
         )}
       </Loadable>

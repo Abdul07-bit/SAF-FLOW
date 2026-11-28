@@ -142,11 +142,12 @@ export function reencodeImage(bytes: Uint8Array, kind: "png" | "jpg"): Uint8Arra
 }
 
 /**
- * Folders whose files are personal data (employee photos, payment receipts). Their URLs carry a
+ * Folders whose files are personal or financial data (employee photos, payment receipts,
+ * supplier bills and payment proofs). Their URLs carry a
  * short-lived HMAC signature; without it /api/files refuses to serve them.
  * Business logos stay public: they appear on QR menus and customer invoices.
  */
-export const PRIVATE_FOLDERS = new Set(["employees", "receipts"]);
+export const PRIVATE_FOLDERS = new Set(["employees", "receipts", "payables"]);
 const PHOTO_URL_TTL_SEC = 3600;
 
 export function isPrivateKey(key: string): boolean {

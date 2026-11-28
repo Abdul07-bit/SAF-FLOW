@@ -13,6 +13,7 @@ import "./routes/dine";
 import "./routes/stay";
 import "./routes/bill";
 import "./routes/daybook";
+import "./routes/payables";
 import "./routes/system";
 
 export { handleRequest, listRoutes } from "./http/router";

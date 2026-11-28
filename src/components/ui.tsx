@@ -140,6 +140,8 @@ const STATUS_TONE: Record<string, Tone> = {
   CHECKED_OUT: "neutral", CLOSED: "neutral", INACTIVE: "neutral", BASIC: "neutral", NORMAL: "neutral", LOW: "neutral", ON_LEAVE: "neutral",
   EXPIRED: "bad", SUSPENDED: "bad", CANCELLED: "bad", VOID: "bad", ABSENT: "bad", OUT_OF_ORDER: "bad", FAILED: "bad", REVOKED: "bad", NO_SHOW: "bad", URGENT: "bad",
   GROWTH: "brand",
+  // Supplier credit bills and payments
+  PARTIALLY_PAID: "warn", UNPAID: "info", OVERDUE: "bad", REVERSED: "bad",
 };
 
 export function StatusBadge({ value, label }: { value: string | null | undefined; label?: string }) {

@@ -1,5 +1,5 @@
 import {
-  BadgeCheck, BarChart3, BedDouble, BookOpen, Boxes, Building2, CalendarClock, CalendarDays, CalendarRange, ChefHat, ClipboardList, ConciergeBell,
+  Banknote, BadgeCheck, BarChart3, BedDouble, BellRing, BookOpen, FileChartColumn, HandCoins, ReceiptText, Boxes, Building2, CalendarClock, CalendarDays, CalendarRange, ChefHat, ClipboardList, ConciergeBell,
   CreditCard, FileText, Fingerprint, Gauge, History, IdCard, Landmark, LayoutDashboard, LifeBuoy, LineChart, ListChecks, MonitorSmartphone,
   Package, PackagePlus, PlusCircle, QrCode, Receipt, ScanBarcode, ScrollText, Settings, ShieldCheck, ShoppingCart, SlidersHorizontal, Sparkles, Store,
   Tags, Trash2, Truck, UserCog, Users, UsersRound, UtensilsCrossed, Wallet, Wrench, type LucideIcon,
@@ -89,6 +89,16 @@ export const PRODUCT_NAV: Record<ProductCode, NavSection[]> = {
         { slug: "purchases", label: "Purchases", icon: PackagePlus, feature: "purchases", permission: "purchases.manage" },
         { slug: "wastage", label: "Wastage", icon: Trash2, feature: "wastage", permission: "inventory.manage" },
         { slug: "stock-ledger", label: "Stock ledger", icon: History, feature: "inventory_advanced", permission: "inventory.view" },
+      ],
+    },
+    {
+      title: "Supplier credit",
+      items: [
+        { slug: "supplier-credit", label: "Supplier credit", icon: HandCoins, feature: "supplier_credit", permission: "payables.view" },
+        { slug: "supplier-purchases", label: "Credit purchases", icon: ReceiptText, feature: "supplier_credit", permission: "payables.view" },
+        { slug: "supplier-payments", label: "Supplier payments", icon: Banknote, feature: "supplier_credit", permission: "payables.view" },
+        { slug: "supplier-reports", label: "Credit reports", icon: FileChartColumn, feature: "supplier_credit", permission: "payables.view" },
+        { slug: "supplier-alerts", label: "Credit alerts", icon: BellRing, feature: "supplier_credit", permission: "payables.view" },
       ],
     },
     ACCOUNTS,

@@ -12,6 +12,8 @@ import { currentCode } from "@/server/auth/mfa";
 import { api, createBusiness, createStaff, expectError, login, sessionCookieFrom, STRONG_PASSWORD } from "../helpers";
 import { TEST_ENV } from "../env";
 
+const APPEND_ONLY = new Set(["audit_logs", "supplier_ledger_entries", "supplier_purchase_items"]);
+
 const PNG_1PX = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64");
 const imageForm = (bytes: Uint8Array, name = "photo.png") => {
   const fd = new FormData();
@@ -52,9 +54,10 @@ describe("tenant isolation (database level)", () => {
       const [{ n }] = await withPlatform((db) => db.$queryRawUnsafe<{ n: bigint }[]>(`SELECT count(*) AS n FROM "${t}" WHERE tenant_id = $1::uuid`, b.tenantId));
       bRowsSomewhere += Number(n);
       const [{ seen }] = await withTenant(a.tenantId, (db) => db.$queryRawUnsafe<{ seen: bigint }[]>(`SELECT count(*) AS seen FROM "${t}" WHERE tenant_id = $1::uuid`, b.tenantId));
-      // audit_logs: the app role has no UPDATE privilege at all (even stronger than RLS).
+      // Append-only tables (audit trail, supplier ledger and bill lines): the app role
+      // has no UPDATE privilege at all (even stronger than RLS).
       const touched = await withTenant(a.tenantId, (db) => db.$executeRawUnsafe(`UPDATE "${t}" SET tenant_id = tenant_id WHERE tenant_id = $1::uuid`, b.tenantId))
-        .catch((e: Error) => { if (/permission denied/i.test(e.message) && t === "audit_logs") return 0; throw e; });
+        .catch((e: Error) => { if (/permission denied/i.test(e.message) && APPEND_ONLY.has(t)) return 0; throw e; });
       if (Number(seen) !== 0 || touched !== 0) leaks.push(t);
     }
     expect(bRowsSomewhere).toBeGreaterThan(20);

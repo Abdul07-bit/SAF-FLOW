@@ -18,6 +18,8 @@ import { currentBusinessDate, formatDailyNo } from "@/lib/business-day";
 import { fileUrl } from "../core/storage";
 import { whatsappLink } from "../core/notify";
 import { addTenders, assertSplitMatches, describePayment, splitPartsSchema } from "@/shared/tender";
+import { billFromStockPurchase, billsWithDue } from "../core/payables";
+import { getCreditSettings, onPurchaseRecorded } from "../core/payables-alerts";
 
 const isoDate = z.string().refine(isISODate, "Use YYYY-MM-DD");
 const appUrl = () => (process.env.APP_URL || "http://localhost:3000").replace(/\/$/, "");
@@ -703,6 +705,15 @@ async function receiveDinePurchase(ctx: Ctx, purchaseId: string) {
     await ctx.db.dineStockItem.update({ where: { id: i.stockItemId }, data: { costPerUnit: i.unitCost } });
   }
   await ctx.db.dinePurchase.update({ where: { id: p.id }, data: { status: "RECEIVED", receivedAt: new Date() } });
+  // Supplier credit: when the business links stock purchases, the received order becomes an unpaid supplier bill (once).
+  if (ctx.has("supplier_credit") && (await getCreditSettings(ctx.db, ctx.tenantId)).linkStockPurchases) {
+    const today = currentBusinessDate(await getBusinessHours(ctx.db, ctx.tenantId, "dine"));
+    const bill = await billFromStockPurchase(ctx.db, { tenantId: ctx.tenantId, userId: ctx.user.id, branchId: ctx.branchId || null, today }, p.id);
+    if (bill && !bill.duplicate) {
+      const [presented] = await billsWithDue(ctx.db, today, { id: bill.id, tenantId: ctx.tenantId });
+      await onPurchaseRecorded(ctx.db, ctx.tenantId, today, presented);
+    }
+  }
 }
 
 route({

@@ -12,6 +12,7 @@ import { BillCashier, BillCustomers, BillDashboard, BillPos, BillSales } from ".
 import { BillAdjustments, BillAnalytics, BillCounters, BillInventory, BillProducts, BillPurchases, BillReports, BillSuppliers, BillValuation } from "./bill-stock";
 import { DineAnalytics, DineInventory, DineMenu, DinePurchases, DineRecipes, DineReports, DineStockLedger, DineSuppliers, DineTables, DineWastage } from "./dine-manage";
 import { DineCashier, DineDashboard, DineKds, DineOrders, DinePos, DineWaiter } from "./dine-service";
+import { SupplierAlertsScreen, SupplierCreditScreen, SupplierPaymentsScreen, SupplierPurchasesScreen, SupplierReportsScreen } from "./dine-payables";
 import { BranchesScreen, SettingsScreen, SubscriptionScreen, SupportScreen } from "./shared-account";
 import { AttendanceScreen, AttendanceStationScreen, EmployeesScreen, IdCardsScreen, MyAttendanceScreen, ShiftsScreen, TeamScreen, VerifyScreen } from "./shared-team";
 import { StayAvailability, StayCashier, StayDashboard, StayFrontDesk, StayInvoices, StayReservations } from "./stay-front";
@@ -55,6 +56,11 @@ export const SCREENS: Record<string, ScreenComponent> = {
   "dine/stock-ledger": DineStockLedger,
   "dine/reports": DineReports,
   "dine/analytics": DineAnalytics,
+  "dine/supplier-credit": SupplierCreditScreen,
+  "dine/supplier-purchases": SupplierPurchasesScreen,
+  "dine/supplier-payments": SupplierPaymentsScreen,
+  "dine/supplier-reports": SupplierReportsScreen,
+  "dine/supplier-alerts": SupplierAlertsScreen,
 
   // SAF Stay Flow
   "stay/": StayDashboard,
